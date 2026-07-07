@@ -1,0 +1,38 @@
+/* ── KSE CRM: Semantic Alias Tokens ─────────────
+   Usar SIEMPRE estos alias en componentes.
+   Nunca primitivos directamente (--brand-500, etc).
+   Se adaptan automáticamente a claro/oscuro.
+─────────────────────────────────────────────── */
+
+/* Modo Claro (default) */
+:root {
+  --bg-page:            var(--neutral-50);    /* Fondo de página               */
+  --bg-surface:         var(--neutral-0);     /* Cards, paneles, modales        */
+  --bg-surface-2:       var(--neutral-100);   /* Hover, inputs, fondos anidados */
+  --border:             var(--neutral-200);   /* Borde estándar                 */
+  --border-subtle:      var(--neutral-100);   /* Divisor sutil entre ítems      */
+  --text-primary:       var(--neutral-900);   /* Texto principal                */
+  --text-secondary:     var(--neutral-600);   /* Texto secundario               */
+  --text-tertiary:      var(--neutral-400);   /* Placeholder, metadata          */
+  --text-on-brand:      #ffffff;              /* Texto sobre fondo brand        */
+  --interactive:        var(--brand-500);     /* Botón primario, link activo    */
+  --interactive-hover:  var(--brand-600);     /* Estado hover                   */
+  --interactive-active: var(--brand-700);     /* Estado pressed                 */
+  --focus-ring:         var(--brand-400);     /* Anillo de foco (a11y)          */
+}
+
+/* Modo Oscuro */
+[data-theme="dark"] {
+  --bg-page:            var(--neutral-950);
+  --bg-surface:         var(--neutral-900);
+  --bg-surface-2:       var(--neutral-800);
+  --border:             var(--neutral-700);
+  --border-subtle:      var(--neutral-800);
+  --text-primary:       var(--neutral-50);
+  --text-secondary:     var(--neutral-400);
+  --text-tertiary:      var(--neutral-600);
+  --interactive:        var(--brand-400);
+  --interactive-hover:  var(--brand-300);
+  --interactive-active: var(--brand-200);
+  --focus-ring:         var(--brand-500);
+}

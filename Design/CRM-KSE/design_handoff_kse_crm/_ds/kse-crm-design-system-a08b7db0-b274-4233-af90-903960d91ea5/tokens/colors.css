@@ -1,0 +1,74 @@
+/* ── KSE CRM: Color Primitives ───────────────────
+   OKLCH-based for perceptual uniformity.
+   Never use these directly in components — use
+   alias tokens from aliases.css instead.
+─────────────────────────────────────────────── */
+:root {
+
+  /* ── Brand: Naranja Ámbar (hue 48°) ── */
+  --brand-50:  oklch(0.97 0.018 48);
+  --brand-100: oklch(0.93 0.045 48);
+  --brand-200: oklch(0.87 0.090 48);
+  --brand-300: oklch(0.78 0.140 48);
+  --brand-400: oklch(0.70 0.175 48);
+  --brand-500: oklch(0.63 0.195 48);  /* Color principal KSE */
+  --brand-600: oklch(0.55 0.185 48);
+  --brand-700: oklch(0.46 0.165 48);
+  --brand-800: oklch(0.37 0.130 48);
+  --brand-900: oklch(0.28 0.090 48);
+  --brand-950: oklch(0.20 0.060 48);
+
+  /* ── Neutral: Warm Gray (hue 65°) ── */
+  --neutral-0:   #ffffff;
+  --neutral-50:  oklch(0.985 0.003 65);
+  --neutral-100: oklch(0.965 0.006 65);
+  --neutral-200: oklch(0.920 0.010 65);
+  --neutral-300: oklch(0.860 0.013 65);
+  --neutral-400: oklch(0.730 0.014 65);
+  --neutral-500: oklch(0.600 0.014 65);
+  --neutral-600: oklch(0.480 0.013 65);
+  --neutral-700: oklch(0.380 0.011 65);
+  --neutral-800: oklch(0.270 0.008 65);
+  --neutral-900: oklch(0.170 0.005 65);
+  --neutral-950: oklch(0.120 0.003 65);
+
+  /* ── Semántico: Success (hue 155°) ── */
+  --success-50:  oklch(0.97 0.030 155);
+  --success-100: oklch(0.92 0.065 155);
+  --success-200: oklch(0.87 0.080 155);
+  --success-500: oklch(0.58 0.155 155);
+  --success-600: oklch(0.50 0.145 155);
+  --success-700: oklch(0.42 0.130 155);
+
+  /* ── Semántico: Error (hue 25°) ── */
+  --error-50:  oklch(0.97 0.025 25);
+  --error-100: oklch(0.92 0.055 25);
+  --error-200: oklch(0.87 0.080 25);
+  --error-500: oklch(0.56 0.215 25);
+  --error-600: oklch(0.47 0.200 25);
+  --error-700: oklch(0.39 0.175 25);
+
+  /* ── Semántico: Warning (hue 80°) ── */
+  --warning-50:  oklch(0.98 0.020 80);
+  --warning-100: oklch(0.95 0.055 80);
+  --warning-500: oklch(0.76 0.160 80);
+  --warning-600: oklch(0.66 0.155 80);
+
+  /* ── Semántico: Info (hue 250°) ── */
+  --info-50:  oklch(0.97 0.020 250);
+  --info-100: oklch(0.93 0.045 250);
+  --info-500: oklch(0.58 0.155 250);
+  --info-600: oklch(0.50 0.145 250);
+
+  /* ── Etapas del cliente (pipeline CRM) ── */
+  --stage-1-bg:     var(--brand-100);    --stage-1-text:   var(--brand-700);    --stage-1-border:  var(--brand-200);
+  --stage-2-bg:     var(--brand-200);    --stage-2-text:   var(--brand-800);    --stage-2-border:  var(--brand-300);
+  --stage-3-bg:     var(--brand-400);    --stage-3-text:   #ffffff;             --stage-3-border:  var(--brand-400);
+  --stage-4-bg:     var(--success-100);  --stage-4-text:   var(--success-700);  --stage-4-border:  var(--success-500);
+  --stage-5-bg:     var(--neutral-100);  --stage-5-text:   var(--neutral-500);  --stage-5-border:  var(--neutral-300);
+
+  /* ── Estados de seguimiento ── */
+  --followup-late-bg:   var(--error-50);    --followup-late-text:   var(--error-600);    --followup-late-border:   var(--error-200);
+  --followup-today-bg:  var(--brand-50);    --followup-today-text:  var(--brand-700);    --followup-today-border:  var(--brand-200);
+  --followup-done-bg:   var(--success-50);  --followup-done-text:   var(--success-600);  --followup-done-border:   var(--success-200);
+}

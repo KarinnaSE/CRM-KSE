@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/kse-crm-design-system-a08b7db0-b274-4233-af90-903960d91ea5/tokens/colors.css">
+  <link rel="stylesheet" href="_ds/kse-crm-design-system-a08b7db0-b274-4233-af90-903960d91ea5/tokens/typography.css">
+  <link rel="stylesheet" href="_ds/kse-crm-design-system-a08b7db0-b274-4233-af90-903960d91ea5/tokens/spacing.css">
+  <link rel="stylesheet" href="_ds/kse-crm-design-system-a08b7db0-b274-4233-af90-903960d91ea5/tokens/effects.css">
+  <link rel="stylesheet" href="_ds/kse-crm-design-system-a08b7db0-b274-4233-af90-903960d91ea5/tokens/aliases.css">
+  <link rel="stylesheet" href="_ds/kse-crm-design-system-a08b7db0-b274-4233-af90-903960d91ea5/styles.css">
+  <script src="_ds/kse-crm-design-system-a08b7db0-b274-4233-af90-903960d91ea5/_ds_bundle.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    @keyframes spin    { to { transform: rotate(360deg); } }
+    @keyframes slideup { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    @keyframes fadeup  { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes toastin { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+
+    /* Search bar */
+    .search-wrap { display:flex; align-items:center; gap:8px; height:40px; padding:0 12px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--bg-surface); transition:border-color 120ms; }
+    .search-wrap:focus-within { border-color:var(--focus-ring); box-shadow:0 0 0 3px oklch(0.70 0.175 48/0.20); }
+    .search-input::placeholder { color:var(--text-tertiary); }
+
+    /* Filter pills */
+    .pills { display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; -webkit-overflow-scrolling:touch; }
+    .pills::-webkit-scrollbar { display:none; }
+    .pill { height:30px; padding:0 12px; border-radius:9999px; border:1px solid var(--border); background:var(--bg-surface); color:var(--text-secondary); font-size:12px; font-weight:500; cursor:pointer; font-family:var(--font-family); white-space:nowrap; transition:all 120ms; flex-shrink:0; }
+    .pill-on { border-color:transparent; background:var(--interactive); color:var(--text-on-brand); }
+
+    /* Client rows */
+    .client-row { display:flex; align-items:center; gap:12px; background:var(--bg-surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:14px; cursor:pointer; box-shadow:var(--shadow-sm); transition:background 120ms; }
+    .client-row:hover { background:var(--bg-surface-2); }
+
+    /* Desktop elements */
+    .desk-nav    { display:none; }
+    .add-btn-dt  { display:none; }
+
+    /* Bottom nav — fixed, mobile only */
+    .bot-nav { display:flex; position:fixed; bottom:0; left:0; right:0; z-index:20; height:64px; background:var(--bg-surface); border-top:1px solid var(--border); }
+    .nav-tab { flex:1; height:100%; border:none; background:transparent; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; color:var(--text-tertiary); font-family:var(--font-family); transition:color 120ms; }
+    .nav-tab.on { color:var(--interactive); }
+
+    /* Mobile FAB */
+    .mob-fab { display:flex; position:fixed; bottom:80px; right:16px; z-index:25; width:56px; height:56px; border-radius:50%; background:var(--interactive); color:#fff; border:none; cursor:pointer; align-items:center; justify-content:center; box-shadow:0 4px 16px oklch(0.63 0.195 48/0.45); }
+
+    /* Content padding accounts for fixed bottom nav */
+    .list-area { padding:12px 16px 96px; }
+
+    /* Profile panel */
+    .b-owner  { background:var(--brand-100); color:var(--brand-700);  border:1px solid var(--brand-200); border-radius:var(--radius-full); padding:3px 12px; font-size:var(--text-xs); font-weight:600; }
+    .b-vendor { background:var(--info-50);   color:var(--info-600);   border:1px solid var(--info-100);  border-radius:var(--radius-full); padding:3px 12px; font-size:var(--text-xs); font-weight:600; }
+    .pan-back { position:fixed; inset:0; z-index:50; background:oklch(0 0 0/0.42); }
+    .prof-pan { position:fixed; bottom:0; left:0; right:0; z-index:51; background:var(--bg-surface); border-radius:20px 20px 0 0; box-shadow:var(--shadow-lg); animation:slideup 240ms cubic-bezier(0.32,0.72,0,1) both; }
+    .drag-hdl { width:40px; height:4px; background:var(--neutral-200); border-radius:9999px; margin:14px auto 6px; }
+
+    /* Add modal */
+    .modal-back { position:fixed; inset:0; z-index:60; background:oklch(0 0 0/0.45); display:flex; align-items:center; justify-content:center; padding:16px; }
+    .modal-card { background:var(--bg-surface); border-radius:var(--radius-xl); padding:28px 24px; width:100%; max-width:440px; max-height:92vh; overflow-y:auto; box-shadow:var(--shadow-lg); animation:fadeup 180ms ease both; }
+
+    @media (min-width:768px) {
+      .bot-nav    { display:none; }
+      .mob-fab    { display:none; }
+      .desk-nav   { display:flex; align-items:center; gap:2px; margin-left:16px; }
+      .add-btn-dt { display:inline-flex; }
+      .drag-hdl   { display:none; }
+      .pan-back   { background:transparent; }
+      .prof-pan   { bottom:auto; top:64px; right:20px; left:auto; width:296px; border-radius:var(--radius-xl); border:1px solid var(--border); animation:fadeup 160ms ease both; }
+      .list-area  { padding:12px 16px 40px; }
+    }
+  </style>
+</helmet>
+
+<div style="min-height:100vh;background:var(--bg-page);font-family:var(--font-family);display:flex;flex-direction:column">
+
+  <!-- ── HEADER ────────────────────── -->
+  <div style="position:sticky;top:0;z-index:40;height:56px;background:var(--bg-surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:6px;flex-shrink:0">
+    <span style="font-size:20px;font-weight:700;color:var(--interactive);letter-spacing:-0.02em">KSE</span>
+    <span style="font-size:10px;font-weight:600;color:var(--text-tertiary);letter-spacing:0.14em;text-transform:uppercase;margin-top:2px">CRM</span>
+    <nav class="desk-nav">
+      <button type="button" style="height:32px;padding:0 14px;border:none;background:transparent;color:var(--text-secondary);border-radius:9999px;font-size:var(--text-sm);font-weight:500;cursor:pointer;font-family:var(--font-family);transition:all 120ms" style-hover="background:var(--bg-surface-2);color:var(--text-primary)" onClick="{{ goSeguimientos }}">Seguimientos</button>
+      <button type="button" style="height:32px;padding:0 14px;border:none;background:var(--brand-50);color:var(--brand-700);border-radius:9999px;font-size:var(--text-sm);font-weight:600;cursor:pointer;font-family:var(--font-family)">Clientes</button>
+      <button type="button" style="height:32px;padding:0 14px;border:none;background:transparent;color:var(--text-secondary);border-radius:9999px;font-size:var(--text-sm);font-weight:500;cursor:pointer;font-family:var(--font-family);transition:all 120ms" style-hover="background:var(--bg-surface-2);color:var(--text-primary)">Reportes</button>
+    </nav>
+    <div style="flex:1"></div>
+    <!-- Desktop add button -->
+    <div class="add-btn-dt" style="margin-right:8px">
+      <x-import component-from-global-scope="KSECRMDesignSystem_a08b7d.Button" variant="primary" size="sm" onClick="{{ openAddModal }}" hint-size="auto,36px">+ Agregar cliente</x-import>
+    </div>
+    <button type="button" style="width:40px;height:40px;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);border-radius:var(--radius-md)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    </button>
+    <button type="button" onClick="{{ openProfile }}" aria-label="Perfil" style="width:40px;height:40px;border:none;background:transparent;cursor:pointer;padding:0;border-radius:50%;display:flex;align-items:center;justify-content:center">
+      <x-import component-from-global-scope="KSECRMDesignSystem_a08b7d.Avatar" name="{{ userName }}" size="sm" hint-size="32px,32px"></x-import>
+    </button>
+  </div>
+
+  <!-- ── SEARCH + FILTERS ──────────── -->
+  <div style="padding:16px 16px 12px;max-width:680px;width:100%;margin:0 auto;box-sizing:border-box">
+    <!-- Page title -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <h1 style="font-size:var(--text-2xl);font-weight:700;color:var(--text-primary);margin:0;line-height:1.2">Clientes</h1>
+        <span style="font-size:var(--text-xs);font-weight:600;color:var(--text-secondary);background:var(--bg-surface-2);border:1px solid var(--border);border-radius:9999px;padding:2px 9px">{{ countLabel }}</span>
+      </div>
+    </div>
+    <!-- Search -->
+    <div class="search-wrap" style="margin-bottom:10px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input class="search-input" type="text" value="{{ query }}" onChange="{{ setQuery }}" placeholder="Buscar por nombre, teléfono o email…" style="flex:1;border:none;outline:none;font-size:var(--text-base);font-family:var(--font-family);color:var(--text-primary);background:transparent" />
+      <sc-if value="{{ showClear }}" hint-placeholder-val="{{ false }}">
+        <button type="button" onClick="{{ clearQuery }}" style="width:20px;height:20px;border:none;background:var(--neutral-200);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);flex-shrink:0;padding:0">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </sc-if>
+    </div>
+    <!-- Stage filter pills -->
+    <div class="pills">
+      <sc-for list="{{ pills }}" as="item" hint-placeholder-count="6">
+        <button type="button" class="{{ item.cls }}" data-val="{{ item.value }}" onClick="{{ handlePillClick }}">{{ item.label }}</button>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- ── CLIENT LIST ──────────────── -->
+  <div class="list-area" style="max-width:680px;width:100%;margin:0 auto;flex:1">
+
+    <!-- Sin resultados -->
+    <sc-if value="{{ isEmpty }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:56px 24px;gap:10px">
+        <div style="width:64px;height:64px;border-radius:50%;background:var(--bg-surface-2);display:flex;align-items:center;justify-content:center;margin-bottom:4px">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </div>
+        <div style="font-size:var(--text-lg);font-weight:700;color:var(--text-primary)">Sin resultados</div>
+        <p style="font-size:var(--text-base);color:var(--text-secondary);margin:0;max-width:260px;line-height:var(--leading-normal);text-wrap:pretty">No encontramos clientes que coincidan con tu búsqueda.</p>
+        <button type="button" onClick="{{ clearAll }}" style="margin-top:6px;height:36px;padding:0 16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-surface);color:var(--text-secondary);font-size:var(--text-sm);font-weight:500;cursor:pointer;font-family:var(--font-family);transition:background 120ms" style-hover="background:var(--bg-surface-2)">Limpiar filtros</button>
+      </div>
+    </sc-if>
+
+    <!-- Lista de clientes -->
+    <sc-if value="{{ hasResults }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <sc-for list="{{ filtered }}" as="item" hint-placeholder-count="7">
+          <div class="client-row" data-id="{{ item.id }}" onClick="{{ handleClientClick }}">
+            <x-import component-from-global-scope="KSECRMDesignSystem_a08b7d.Avatar" name="{{ item.name }}" size="md" hint-size="40px,40px"></x-import>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:var(--text-base);font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.name }}</div>
+              <div style="font-size:var(--text-sm);color:var(--text-secondary);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.company }}</div>
+              <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.phone }}</div>
+            </div>
+            <x-import component-from-global-scope="KSECRMDesignSystem_a08b7d.StageBadge" stage="{{ item.stage }}" hint-size="auto,22px"></x-import>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+  </div>
+
+  <!-- ── MOBILE FAB ────────────────── -->
+  <button type="button" class="mob-fab" onClick="{{ openAddModal }}" aria-label="Agregar cliente">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+  </button>
+
+  <!-- ── BOTTOM NAV ─────────────────── -->
+  <nav class="bot-nav">
+    <button type="button" class="nav-tab" onClick="{{ goSeguimientos }}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span style="font-size:10px">Inicio</span>
+    </button>
+    <button type="button" class="nav-tab on">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <span style="font-size:10px;font-weight:600">Clientes</span>
+    </button>
+    <button type="button" style="flex:1;height:100%;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center" onClick="{{ openAddModal }}">
+      <div style="width:50px;height:50px;border-radius:50%;background:var(--interactive);display:flex;align-items:center;justify-content:center;color:#fff;box-shadow:0 4px 14px oklch(0.63 0.195 48/0.40)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </div>
+    </button>
+    <button type="button" class="nav-tab">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      <span style="font-size:10px">Reportes</span>
+    </button>
+    <button type="button" class="nav-tab" onClick="{{ openProfile }}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span style="font-size:10px">Perfil</span>
+    </button>
+  </nav>
+
+  <!-- ── ADD CLIENT MODAL ──────────── -->
+  <sc-if value="{{ showModal }}" hint-placeholder-val="{{ false }}">
+    <div class="modal-back" onClick="{{ closeModal }}">
+      <div class="modal-card" onClick="{{ stopProp }}">
+        <!-- Header -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+          <h2 style="font-size:var(--text-xl);font-weight:700;color:var(--text-primary);margin:0">Nuevo cliente</h2>
+          <button type="button" onClick="{{ closeModal }}" style="width:36px;height:36px;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);border-radius:var(--radius-md)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <!-- Form -->
+        <form onSubmit="{{ handleAddSave }}" noValidate="{{ true }}" style="display:flex;flex-direction:column;gap:16px">
+          <x-import component-from-global-scope="KSECRMDesignSystem_a08b7d.Input"
+            label="Nombre completo" value="{{ addForm_name }}" onChange="{{ setAddName }}"
+            placeholder="Ej. María García" required="{{ true }}" disabled="{{ addSaving }}"
+            error="{{ addErr_name }}" hint-size="100%,auto">
+          </x-import>
+          <x-import component-from-global-scope="KSECRMDesignSystem_a08b7d.Input"
+            label="Empresa" value="{{ addForm_company }}" onChange="{{ setAddCompany }}"
+            placeholder="Nombre comercial" disabled="{{ addSaving }}" hint-size="100%,auto">
+          </x-import>
+          <x-import component-from-global-scope="KSECRMDesignSystem_a08b7d.Input"
+            label="Teléfono" value="{{ addForm_phone }}" onChange="{{ setAddPhone }}"
+            placeholder="+52 33 1234-5678" type="tel" disabled="{{ addSaving }}" hint-size="100%,auto">
+          </x-import>
+          <!-- Stage -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="font-size:var(--text-sm);font-weight:500;color:var(--text-primary)">Etapa inicial</span>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">
+              <sc-for list="{{ stagePills }}" as="item" hint-placeholder-count="5">
+                <button type="button" class="{{ item.cls }}" data-stage="{{ item.value }}" onClick="{{ handleStageSelect }}">{{ item.label }}</button>
+              </sc-for>
+            </div>
+          </div>
+          <!-- Actions -->
+          <div style="display:flex;gap:10px;margin-top:4px">
+            <x-import component-from-global-scope="KSECRMDesignSystem_a08b7d.Button"
+              variant="secondary" size="md" fullWidth="{{ true }}"
+              onClick="{{ closeModal }}" disabled="{{ addSaving }}" hint-size="100%,40px">Cancelar</x-import>
+            <x-import component-from-global-scope="KSECRMDesignSystem_a08b7d.Button"
+              variant="primary" size="md" type="submit" fullWidth="{{ true }}"
+              disabled="{{ addSaving }}" hint-size="100%,40px">{{ addBtnLabel }}</x-import>
+          </div>
+        </form>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ── PROFILE PANEL ─────────────── -->
+  <sc-if value="{{ profileOpen }}" hint-placeholder-val="{{ false }}">
+    <div class="pan-back" onClick="{{ closeProfile }}"></div>
+    <div class="prof-pan" role="dialog">
+      <div class="drag-hdl"></div>
+      <div style="display:flex;flex-direction:column;align-items:center;padding:20px 24px 22px;text-align:center;gap:8px">
+        <x-import component-from-global-scope="KSECRMDesignSystem_a08b7d.Avatar" name="{{ userName }}" size="xl" hint-size="64px,64px"></x-import>
+        <div style="margin-top:2px">
+          <div style="font-size:var(--text-lg);font-weight:700;color:var(--text-primary);line-height:1.25">{{ userName }}</div>
+          <div style="font-size:var(--text-sm);color:var(--text-secondary);margin-top:4px">{{ userEmail }}</div>
+        </div>
+        <span class="{{ roleBadgeClass }}">{{ userRoleLabel }}</span>
+      </div>
+      <div style="height:1px;background:var(--border-subtle);margin:0 0 6px"></div>
+      <div style="padding:0 8px 12px">
+        <button type="button" onClick="{{ handleLogout }}" disabled="{{ loggingOut }}" style="width:100%;display:flex;align-items:center;gap:12px;padding:12px 14px;background:transparent;border:none;cursor:pointer;border-radius:var(--radius-md);color:var(--error-600);font-family:var(--font-family);font-size:var(--text-base);font-weight:500;transition:background 120ms;text-align:left" style-hover="background:var(--error-50)">
+          <sc-if value="{{ loggingOut }}" hint-placeholder-val="{{ false }}">
+            <div style="width:18px;height:18px;border:2px solid oklch(0.56 0.215 25/0.25);border-top-color:var(--error-500);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0"></div>
+            Cerrando sesión…
+          </sc-if>
+          <sc-if value="{{ notLoggingOut }}" hint-placeholder-val="{{ true }}">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+            Cerrar sesión
+          </sc-if>
+        </button>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ── TOAST ─────────────────────── -->
+  <sc-if value="{{ showToast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--neutral-900);color:#fff;font-size:var(--text-sm);font-weight:500;padding:10px 20px;border-radius:9999px;box-shadow:var(--shadow-lg);white-space:nowrap;animation:toastin 200ms ease both;z-index:200">{{ toastMsg }}</div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;$preview&quot;: { &quot;width&quot;: 1280, &quot;height&quot;: 800 },
+  &quot;activeUser&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;carlos&quot;,&quot;marta&quot;], &quot;default&quot;: &quot;carlos&quot;, &quot;tsType&quot;: &quot;string&quot; }
+}">
+class Component extends DCLogic {
+  state = {
+    clients: [
+      { id:1, name:'María García',      company:'Tienda El Sol',          stage:1, phone:'+52 33 1234-5678', email:'maria@tiendaelsol.com'      },
+      { id:2, name:'Roberto Méndez',    company:'Taquería Los Compadres', stage:3, phone:'+52 33 2345-6789', email:'roberto@loscompadres.mx'     },
+      { id:3, name:'Ana Ruiz',          company:'Salón Belleza Eterna',   stage:2, phone:'+52 33 3456-7890', email:'ana@bellezaeterna.com'       },
+      { id:4, name:'Carlos Vega',       company:'Carpintería Vega',       stage:4, phone:'+52 33 4567-8901', email:'cvega@carpinteriavega.com'   },
+      { id:5, name:'Lucía Torres',      company:'Boutique Flores',        stage:1, phone:'+52 33 5678-9012', email:'lucia@boutiqueflores.mx'     },
+      { id:6, name:'Miguel Ángel Soto', company:'Ferretería Don Miguel',  stage:5, phone:'+52 33 6789-0123', email:'masoto@ferreteria.mx'        },
+      { id:7, name:'Sandra López',      company:'Papelería El Grifo',     stage:2, phone:'+52 33 7890-1234', email:'sandra@papeleriaelgrifo.mx'  },
+    ],
+    query:        '',
+    stageFilter:  0,
+    modal:        null,
+    addForm:      { name:'', company:'', phone:'', stage:1 },
+    addErrors:    {},
+    addSaving:    false,
+    profileOpen:  false,
+    loggingOut:   false,
+    toast:        null,
+  };
+
+  USERS = {
+    marta:  { name:'Marta López',  email:'marta@ksecrm.mx',  role:'dueña',    roleLabel:'Dueña'    },
+    carlos: { name:'Carlos Rueda', email:'carlos@ksecrm.mx', role:'vendedor', roleLabel:'Vendedor' },
+  };
+  STAGE_LABELS = ['','Interesado','En conversación','Propuesta enviada','Comprado ✓','Perdido'];
+  PILL_LABELS  = ['Todos','Interesado','En conv.','Propuesta','Comprado','Perdido'];
+
+  componentDidMount() {
+    const extra = JSON.parse(localStorage.getItem('kse_extra_clients') || '[]');
+    const baseIds = new Set(this.state.clients.map(c => c.id));
+    const newExtras = extra.filter(c => !baseIds.has(c.id));
+    const allClients = newExtras.length > 0
+      ? [...this.state.clients, ...newExtras]
+      : [...this.state.clients];
+    // Write shared store first, then update state
+    localStorage.setItem('kse_all_clients', JSON.stringify(allClients));
+    if (newExtras.length > 0) this.setState({ clients: allClients });
+  }
+
+  saveClient = () => {
+    const { addForm } = this.state;
+    const errs = {};
+    if (!addForm.name.trim()) errs.name = 'El nombre es obligatorio.';
+    if (Object.keys(errs).length) { this.setState({ addErrors: errs }); return; }
+    this.setState({ addSaving: true });
+    setTimeout(() => {
+      const nu = { id:Date.now(), name:addForm.name.trim(), company:addForm.company.trim(), phone:addForm.phone.trim(), email:'', stage:addForm.stage };
+      const extra = JSON.parse(localStorage.getItem('kse_extra_clients') || '[]');
+      extra.push(nu);
+      localStorage.setItem('kse_extra_clients', JSON.stringify(extra));
+      this.setState(s => {
+        const updated = [...s.clients, nu];
+        localStorage.setItem('kse_all_clients', JSON.stringify(updated));
+        return { clients: updated, modal:null, addForm:{ name:'',company:'',phone:'',stage:1 }, addErrors:{}, addSaving:false, toast:{ msg:`Cliente ${nu.name} agregado.` } };
+      });
+      setTimeout(() => this.setState({ toast:null }), 3000);
+    }, 700);
+  };
+
+  renderVals() {
+    const { clients, query, stageFilter, modal, addForm, addErrors, addSaving, profileOpen, loggingOut, toast } = this.state;
+    const key  = this.props.activeUser ?? 'carlos';
+    const user = this.USERS[key] || this.USERS.carlos;
+
+    const q = query.trim().toLowerCase();
+    const filtered = clients.filter(c => {
+      const ms = !q || c.name.toLowerCase().includes(q) || c.phone.includes(q) || c.email.toLowerCase().includes(q);
+      const mf = stageFilter === 0 || c.stage === stageFilter;
+      return ms && mf;
+    });
+
+    const pills = this.PILL_LABELS.map((label, i) => ({
+      label, value: i,
+      cls: 'pill' + (stageFilter === i ? ' pill-on' : ''),
+    }));
+    const stagePills = [1,2,3,4,5].map(s => ({
+      value: s, label: this.STAGE_LABELS[s],
+      cls: 'pill' + (addForm.stage === s ? ' pill-on' : ''),
+    }));
+
+    const countLabel = (stageFilter === 0 && !q)
+      ? `${clients.length}` : `${filtered.length} de ${clients.length}`;
+
+    const sp = React.createElement('div', { style:{ width:'16px',height:'16px',border:'2px solid rgba(255,255,255,0.35)',borderTopColor:'#fff',borderRadius:'50%',animation:'spin 0.7s linear infinite',flexShrink:0 }});
+    const addBtnLabel = addSaving
+      ? React.createElement('span',{style:{display:'flex',alignItems:'center',gap:'7px'}},sp,'Guardando…')
+      : 'Agregar cliente';
+
+    return {
+      userName: user.name, userEmail: user.email, userRoleLabel: user.roleLabel,
+      roleBadgeClass: user.role === 'dueña' ? 'b-owner' : 'b-vendor',
+      filtered, pills, stagePills, countLabel,
+      isEmpty: filtered.length === 0, hasResults: filtered.length > 0,
+      query, showClear: q.length > 0,
+      showModal: modal !== null,
+      addForm_name: addForm.name, addForm_company: addForm.company, addForm_phone: addForm.phone,
+      addErr_name: addErrors.name || null,
+      addSaving, addBtnLabel,
+      profileOpen, loggingOut, notLoggingOut: !loggingOut,
+      showToast: Boolean(toast), toastMsg: toast ? toast.msg : '',
+      /* Handlers */
+      setQuery:    e => this.setState({ query: e.target.value }),
+      clearQuery:  () => this.setState({ query: '' }),
+      clearAll:    () => this.setState({ query:'', stageFilter:0 }),
+      handlePillClick:   e => this.setState({ stageFilter: parseInt(e.currentTarget.dataset.val) }),
+      handleStageSelect: e => this.setState(s => ({ addForm:{...s.addForm, stage:parseInt(e.currentTarget.dataset.stage)} })),
+      handleClientClick: e => {
+        const id = parseInt(e.currentTarget.dataset.id);
+        const c = this.state.clients.find(c => c.id === id);
+        if (!c) return;
+        // Refresh shared store before navigating
+        localStorage.setItem('kse_all_clients', JSON.stringify(this.state.clients));
+        window.location.href = `Ficha.dc.html?id=${id}`;
+      },
+      openAddModal:  () => { window.location.href = 'NuevoCliente.dc.html'; },
+      closeModal:    () => this.setState({ modal:null, addErrors:{} }),
+      stopProp:      e => e.stopPropagation(),
+      handleAddSave: e => { e.preventDefault(); this.saveClient(); },
+      setAddName:    e => this.setState(s => ({ addForm:{...s.addForm, name:e.target.value},    addErrors:{...s.addErrors, name:null} })),
+      setAddCompany: e => this.setState(s => ({ addForm:{...s.addForm, company:e.target.value} })),
+      setAddPhone:   e => this.setState(s => ({ addForm:{...s.addForm, phone:e.target.value} })),
+      openProfile:   () => this.setState({ profileOpen:true }),
+      closeProfile:  () => this.setState({ profileOpen:false }),
+      goSeguimientos: () => { window.location.href = 'Seguimientos.dc.html'; },
+      handleLogout:  () => { this.setState({ loggingOut:true }); setTimeout(() => { window.location.href='Login.dc.html'; }, 1000); },
+    };
+  }
+}
+</script>
+</body>
+</html>
