@@ -44,3 +44,12 @@ convex/_generated/
 # herramientas locales / artefactos de depuración
 /.playwright-mcp/
 .claude/settings.local.json
+
+# handoff de diseño (referencia local; no se publica en el repo de producción)
+/Design/
+
+# artefactos internos del proceso de planificación/auditoría (no se publican)
+/plan.txt
+/audit.txt
+/codigo.txt
+/audit_codigo.txt

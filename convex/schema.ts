@@ -62,9 +62,16 @@ export default defineSchema({
     status: v.union(v.literal("pendiente"), v.literal("hecho")),
     assignedTo: v.optional(v.id("users")),
     createdBy: v.id("users"),
+    // Trazabilidad derivada del cierre (KAR-19). Invariante: ambos presentes
+    // ⟺ status==="hecho"; ausentes ⟺ "pendiente". Se escriben atómicamente
+    // junto con `status` (único punto de escritura: helper cerrarFollowup).
+    completedAt: v.optional(v.number()),
+    completedBy: v.optional(v.id("users")),
   })
     .index("by_client", ["clientId"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    // Range-scan de la pantalla principal: pendientes ordenados por fecha.
+    .index("by_status_dueDate", ["status", "dueDate"]),
 
   // ── Venta ── asociada a un cliente.
   sales: defineTable({

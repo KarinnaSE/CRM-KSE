@@ -4,7 +4,7 @@ CRM a medida para un negocio de ventas digitales (formaciones, consultoría, pla
 
 - **Producto (PRD):** Notion — `CRM-PRD` y la bitácora `CRM-Cambios y Mejoras`.
 - **Plan de trabajo:** Linear — proyecto `CRM-MVP` (equipo KarinnaSE, prefijo `KAR`). Es la fuente de verdad para el desarrollo.
-- **Diseño de referencia:** carpeta [`Design/`](./Design) — 7 pantallas del handoff (`.dc.html`).
+- **Diseño de referencia:** handoff de 7 pantallas (`.dc.html`); se mantiene fuera del repo (sus tokens ya están portados a `app/globals.css`).
 
 ## Stack
 
@@ -47,13 +47,13 @@ app/
   (auth)/login/         Pantalla de Login
   (app)/                Pantallas autenticadas (con navegación persistente)
     layout.tsx          Navegación (Admin visible solo para la dueña)
-    seguimientos/       Pantalla de entrada: atrasados + hoy
+    seguimientos/       Pantalla de entrada: atrasados + hoy (implementada)
     clientes/           Lista, /nuevo (alta) y /[id] (ficha)
     usuarios/           Gestión de usuarios y roles (solo dueña)
     perfil/             Perfil / cerrar sesión
-components/             Componentes reutilizables (por construir)
+components/             Componentes reutilizables (ui, nav, seguimientos, auth)
 lib/                    Utilidades (cn, etapas del pipeline)
-convex/                 Backend: schema y funciones (ver convex/README.md)
+convex/                 Backend: schema y funciones (seguimientos, seed, dates)
 ```
 
 ## Variables de entorno
@@ -65,7 +65,7 @@ Copia `.env.example` a `.env.local`. `npx convex dev` rellena `CONVEX_DEPLOYMENT
 ```bash
 git add -A
 git commit -m "Estructura inicial del proyecto"
-git remote add origin git@github.com:<usuario>/CRM-KSE.git
+git remote add origin https://github.com/KarinnaSE/CRM-KSE.git
 git push -u origin main
 ```
 
@@ -73,7 +73,7 @@ git push -u origin main
 
 1. En Railway, crea un proyecto **Deploy from GitHub repo** apuntando a este repositorio (Nixpacks detecta Next.js automáticamente).
 2. En **Variables**, añade `CONVEX_DEPLOY_KEY` (Convex → Settings → Deploy Keys, de producción).
-3. El build ya está configurado en `railway.json`: `npx convex deploy --cmd 'npm run build'` despliega las funciones de Convex e inyecta `NEXT_PUBLIC_CONVEX_URL` de producción antes de compilar Next.js.
+3. El build ya está configurado en `railway.json`: `npx convex deploy --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL --cmd 'npm run build'` despliega las funciones de Convex e inyecta `NEXT_PUBLIC_CONVEX_URL` de producción antes de compilar Next.js.
 4. Railway asigna el puerto con `PORT`; `npm run start` (`next start`) lo respeta.
 
 ## Scripts
