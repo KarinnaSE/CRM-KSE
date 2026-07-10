@@ -27,8 +27,9 @@ yarn-error.log*
 .env.local
 .env*.local
 
-# convex (código generado automáticamente por `npx convex dev`)
-convex/_generated/
+# convex: el código generado se VERSIONA a propósito. En el build de Railway,
+# `next build` necesita convex/_generated/ y el checkout limpio no lo traería
+# si estuviera ignorado. Se regenera con `npx convex codegen`.
 
 # typescript
 *.tsbuildinfo
