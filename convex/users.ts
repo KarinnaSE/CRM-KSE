@@ -1,17 +1,25 @@
 import { query } from "./_generated/server";
+import { getAuthUserId } from "@convex-dev/auth/server";
 
 /**
- * Funciones de ejemplo para la entidad Usuario.
- * La gestión completa (alta/edición, activar/desactivar, eliminar y la regla
- * de una sola dueña) se implementará en KAR-54 / KAR-89.
- * NOTA: `./_generated` lo crea `npx convex dev` la primera vez.
+ * Entidad Usuario. La gestión completa (alta/edición, activar/desactivar,
+ * eliminar y la regla de una sola dueña) se implementará en KAR-54 / KAR-89
+ * (con `requireOwner`, ver convex/authz.ts).
  */
 
-// Lista los usuarios activos.
-export const listActive = query({
+/**
+ * Usuario de la sesión actual, o `null`. FAIL-CLOSED para cuentas sin acceso:
+ * si no hay sesión, o el usuario no existe, o `active !== true`, devuelve `null`
+ * (nunca expone otros usuarios ni un usuario inactivo). Es la única función de
+ * `users` sin `requireAuthUser`: `null` es la respuesta legítima para anónimo.
+ */
+export const me = query({
   args: {},
   handler: async (ctx) => {
-    const users = await ctx.db.query("users").collect();
-    return users.filter((u) => u.active);
+    const id = await getAuthUserId(ctx);
+    if (!id) return null;
+    const user = await ctx.db.get(id);
+    if (!user || user.active !== true) return null;
+    return user;
   },
 });

@@ -66,15 +66,9 @@ export default function SeguimientosPage() {
   }
 
   async function onComplete(id: string) {
-    if (!user) {
-      showToast("Cargando usuario…");
-      throw new Error("sin usuario actual");
-    }
     try {
-      await completar({
-        id: id as Id<"followups">,
-        actorId: user._id,
-      });
+      // `completedBy` lo pone el backend desde la sesión (KAR-7): no se envía.
+      await completar({ id: id as Id<"followups"> });
     } catch (e) {
       showToast("No se pudo marcar como hecho. Inténtalo de nuevo.");
       throw e;
@@ -94,7 +88,7 @@ export default function SeguimientosPage() {
     };
   }, [data, q]);
 
-  const firstName = user?.name.split(/\s+/)[0] ?? "";
+  const firstName = user?.name?.split(/\s+/)[0] ?? "";
 
   return (
     <section className="mx-auto w-full max-w-2xl px-4 pb-24 pt-6">

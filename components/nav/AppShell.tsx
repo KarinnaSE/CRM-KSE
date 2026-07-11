@@ -1,24 +1,54 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useConvexAuth } from "@convex-dev/auth/react";
+import { useAuthActions } from "@convex-dev/auth/react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { useCurrentUser } from "@/components/auth/CurrentUserProvider";
 
 /**
- * Chrome de navegación persistente (KAR-24). Escritorio: top-bar con
- * pestañas. Móvil: bottom-bar + FAB "Agregar cliente". "Administración"
- * (→ /usuarios) solo para la dueña. Reportes y la campana se muestran
- * inertes (sin pantalla en el MVP). Perfil abre un panel con "Cerrar sesión".
+ * Chrome de navegación persistente (KAR-24) + guardas de sesión (KAR-7).
+ * Escritorio: top-bar con pestañas. Móvil: bottom-bar + FAB "Agregar cliente".
+ * "Administración" (→ /usuarios) solo para la dueña. Reportes y la campana se
+ * muestran inertes (sin pantalla en el MVP). Perfil abre un panel con "Cerrar
+ * sesión" real (signOut).
+ *
+ * Guardas: no se renderiza chrome protegido hasta tener un usuario ACTIVO. Si
+ * hay sesión pero la cuenta no tiene acceso (inactiva/huérfana), se cierra la
+ * sesión y se redirige a /login (evita bucle con el middleware).
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { user, users, setUserId } = useCurrentUser();
+  const router = useRouter();
+  const { user } = useCurrentUser();
+  const { isLoading, isAuthenticated } = useConvexAuth();
+  const { signOut } = useAuthActions();
   const [profileOpen, setProfileOpen] = useState(false);
-  const isOwner = user?.role === "duena";
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!isAuthenticated) {
+      router.replace("/login");
+    } else if (user === null) {
+      void signOut().then(() => router.replace("/login?error=disabled"));
+    }
+  }, [isLoading, isAuthenticated, user, router, signOut]);
+
+  async function handleLogout() {
+    await signOut();
+    router.replace("/login");
+  }
+
+  // No renderizar chrome protegido hasta tener usuario activo.
+  if (isLoading || !isAuthenticated || user === undefined || user === null) {
+    return <LoadingShell />;
+  }
+
+  const isOwner = user.role === "duena";
   const active = (href: string) => pathname.startsWith(href);
 
   return (
@@ -59,7 +89,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             onClick={() => setProfileOpen((v) => !v)}
             aria-label="Abrir perfil"
           >
-            <Avatar name={user?.name ?? "?"} size="sm" />
+            <Avatar name={user.name ?? "?"} size="sm" />
           </button>
         </div>
       </header>
@@ -103,13 +133,23 @@ export function AppShell({ children }: { children: ReactNode }) {
         <ProfilePanel
           onClose={() => setProfileOpen(false)}
           user={user}
-          users={users}
-          onSwitchUser={(id) => {
-            setUserId(id);
-            setProfileOpen(false);
-          }}
+          onLogout={handleLogout}
         />
       )}
+    </div>
+  );
+}
+
+/* ───────────── Shell de carga (sin chrome protegido) ───────────── */
+
+function LoadingShell() {
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <div
+        role="status"
+        aria-label="Cargando"
+        className="h-8 w-8 animate-spin rounded-full border-2 border-brand-100 border-t-interactive"
+      />
     </div>
   );
 }
@@ -214,16 +254,14 @@ function BellInert() {
 
 function ProfilePanel({
   user,
-  users,
   onClose,
-  onSwitchUser,
+  onLogout,
 }: {
-  user: ReturnType<typeof useCurrentUser>["user"];
-  users: ReturnType<typeof useCurrentUser>["users"];
+  user: NonNullable<ReturnType<typeof useCurrentUser>["user"]>;
   onClose: () => void;
-  onSwitchUser: (id: (typeof users)[number]["_id"]) => void;
+  onLogout: () => void | Promise<void>;
 }) {
-  const isOwner = user?.role === "duena";
+  const isOwner = user.role === "duena";
   return (
     <>
       <div
@@ -241,55 +279,26 @@ function ProfilePanel({
           "md:inset-x-auto md:bottom-auto md:right-4 md:top-16 md:w-72 md:rounded-xl",
         )}
       >
-        {user && (
-          <>
-            <div className="flex items-center gap-3">
-              <Avatar name={user.name} size="xl" />
-              <div className="min-w-0">
-                <p className="truncate text-lg font-bold text-text-primary">
-                  {user.name}
-                </p>
-                <p className="truncate text-sm text-text-secondary">
-                  {user.email}
-                </p>
-                <RoleBadge owner={isOwner} />
-              </div>
-            </div>
-
-            {/* Selector SOLO-DEV para actuar como otro usuario (KAR-7 lo elimina). */}
-            {users.length > 1 && (
-              <div className="mt-4 border-t border-border-subtle pt-3">
-                <p className="mb-1 text-xs font-semibold uppercase text-text-tertiary">
-                  Cambiar de usuario (dev)
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {users.map((u) => (
-                    <button
-                      key={u._id}
-                      type="button"
-                      onClick={() => onSwitchUser(u._id)}
-                      className={cn(
-                        "rounded-full border px-3 py-1 text-xs",
-                        u._id === user._id
-                          ? "border-interactive bg-brand-50 text-brand-700"
-                          : "border-border text-text-secondary hover:bg-surface-2",
-                      )}
-                    >
-                      {u.name.split(/\s+/)[0]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
-        )}
+        <div className="flex items-center gap-3">
+          <Avatar name={user.name ?? "?"} size="xl" />
+          <div className="min-w-0">
+            <p className="truncate text-lg font-bold text-text-primary">
+              {user.name ?? "Usuario"}
+            </p>
+            <p className="truncate text-sm text-text-secondary">{user.email}</p>
+            <RoleBadge owner={isOwner} />
+          </div>
+        </div>
 
         <div className="mt-4 border-t border-border-subtle pt-3">
-          <Link href="/login" onClick={onClose}>
-            <Button variant="danger" size="sm" className="w-full justify-start">
-              <LogoutIcon /> Cerrar sesión
-            </Button>
-          </Link>
+          <Button
+            variant="danger"
+            size="sm"
+            className="w-full justify-start"
+            onClick={() => void onLogout()}
+          >
+            <LogoutIcon /> Cerrar sesión
+          </Button>
         </div>
       </div>
     </>

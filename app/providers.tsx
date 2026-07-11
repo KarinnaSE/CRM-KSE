@@ -1,31 +1,42 @@
 "use client";
 
 import { ReactNode, useMemo } from "react";
-import { ConvexProvider, ConvexReactClient } from "convex/react";
+import { ConvexReactClient } from "convex/react";
+import { ConvexAuthNextjsProvider } from "@convex-dev/auth/nextjs";
 
 /**
- * Proveedor de Convex para toda la app.
+ * Proveedor de Convex + Convex Auth para toda la app (KAR-7).
  *
- * `NEXT_PUBLIC_CONVEX_URL` la escribe automáticamente `npx convex dev`
- * en tu `.env.local`. Mientras aún no esté configurada (primer arranque
- * antes de conectar Convex), la app sigue funcionando: simplemente no se
- * monta el proveedor y las queries/mutations no estarán disponibles todavía.
+ * FAIL-CLOSED: si falta `NEXT_PUBLIC_CONVEX_URL`, NO se monta el proveedor ni
+ * se renderiza contenido protegido; se muestra un error de configuración
+ * visible. En auth real, faltar la URL de Convex no debe degradar en silencio.
  */
 export function Providers({ children }: { children: ReactNode }) {
-  const client = useMemo(() => {
-    const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-    return url ? new ConvexReactClient(url) : null;
-  }, []);
+  const url = process.env.NEXT_PUBLIC_CONVEX_URL;
+  const client = useMemo(
+    () => (url ? new ConvexReactClient(url) : null),
+    [url],
+  );
 
   if (!client) {
-    if (typeof window !== "undefined") {
-      console.warn(
-        "[KSE CRM] NEXT_PUBLIC_CONVEX_URL no está configurada. " +
-          "Ejecuta `npx convex dev` para conectar la base de datos.",
-      );
-    }
-    return <>{children}</>;
+    return (
+      <main className="flex min-h-screen items-center justify-center p-6">
+        <div className="max-w-sm text-center">
+          <h1 className="text-lg font-bold text-error-600">
+            Error de configuración
+          </h1>
+          <p className="mt-2 text-sm text-text-secondary">
+            Falta <code>NEXT_PUBLIC_CONVEX_URL</code>. La aplicación no puede
+            iniciar sesión ni cargar datos hasta que esté configurada.
+          </p>
+        </div>
+      </main>
+    );
   }
 
-  return <ConvexProvider client={client}>{children}</ConvexProvider>;
+  return (
+    <ConvexAuthNextjsProvider client={client}>
+      {children}
+    </ConvexAuthNextjsProvider>
+  );
 }

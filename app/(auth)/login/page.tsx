@@ -1,19 +1,278 @@
+"use client";
+
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { Button } from "@/components/ui/Button";
+
 /**
- * Pantalla: Login — puerta de entrada obligatoria del MVP.
- * Diseño de referencia: Design/…/Login.dc.html
- * Issues Linear: KAR-46 (diseño), KAR-7 (autenticación).
+ * Pantalla: Login — puerta de entrada obligatoria del MVP (KAR-7).
+ * Diseño de referencia: Design/…/Login.dc.html.
  *
- * TODO: formulario email + contraseña, iniciar sesión y redirigir a /seguimientos.
+ * Solo inicio de sesión (email + contraseña). El registro está deshabilitado
+ * (backend + UI). Credenciales demo (solo dev): marta@ksecrm.mx / marta2026,
+ * carlos@ksecrm.mx / carlos2026.
  */
 export default function LoginPage() {
   return (
-    <main className="flex min-h-screen items-center justify-center p-6">
-      <div className="w-full max-w-sm text-center">
-        <h1 className="text-2xl font-bold text-text-primary">KSE CRM</h1>
-        <p className="mt-2 text-base text-text-secondary">
-          Pantalla de Login — pendiente de construir.
+    <Suspense>
+      <LoginInner />
+    </Suspense>
+  );
+}
+
+function LoginInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { signIn } = useAuthActions();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(
+    searchParams.get("error") === "disabled"
+      ? "Tu cuenta no tiene acceso. Contacta al administrador."
+      : null,
+  );
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await signIn("password", { email, password, flow: "signIn" });
+      router.replace("/seguimientos");
+    } catch {
+      setError("Correo o contraseña incorrectos.");
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen">
+      {/* ── Panel de marca (solo escritorio) ── */}
+      <div
+        aria-hidden
+        className="relative hidden w-1/2 flex-col items-center justify-center overflow-hidden p-14 md:flex"
+        style={{ backgroundColor: "var(--brand-950)" }}
+      >
+        <div className="relative z-10 max-w-xs text-center">
+          <div className="text-6xl font-bold leading-none tracking-tight text-white">
+            KSE
+          </div>
+          <div
+            className="mt-1.5 text-xs font-semibold uppercase tracking-[0.2em]"
+            style={{ color: "var(--brand-300)" }}
+          >
+            CRM
+          </div>
+          <div
+            className="mx-auto my-6 h-[3px] w-12 rounded-full"
+            style={{ backgroundColor: "var(--brand-500)" }}
+          />
+          <p className="text-xl font-normal leading-snug text-white">
+            Tu negocio,
+            <br />
+            <strong className="font-bold" style={{ color: "var(--brand-300)" }}>
+              bajo control.
+            </strong>
+          </p>
+          <p className="mt-3.5 text-sm leading-relaxed text-neutral-400">
+            Gestiona clientes, da seguimiento a oportunidades y cierra más
+            ventas — desde donde estés.
+          </p>
+        </div>
+        <p className="absolute bottom-6 text-[11px] text-neutral-600">
+          KSE CRM © 2026
         </p>
       </div>
-    </main>
+
+      {/* ── Panel del formulario ── */}
+      <div className="flex flex-1 flex-col items-center justify-center bg-surface px-6 py-16">
+        <div className="w-full max-w-sm">
+          {/* Logo (solo móvil) */}
+          <div className="mb-10 md:hidden">
+            <div className="text-2xl font-bold leading-none tracking-tight text-interactive">
+              KSE
+            </div>
+            <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-text-tertiary">
+              CRM
+            </div>
+          </div>
+
+          <div className="mb-7">
+            <h1 className="text-2xl font-bold text-text-primary">
+              Iniciar sesión
+            </h1>
+            <p className="mt-1.5 text-base text-text-secondary">
+              Accede a tu cuenta de KSE CRM.
+            </p>
+          </div>
+
+          <form onSubmit={onSubmit} noValidate className="flex flex-col gap-[18px]">
+            {/* Correo */}
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor="email"
+                className="text-sm font-medium text-text-primary"
+              >
+                Correo electrónico
+              </label>
+              <input
+                id="email"
+                type="email"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setError(null);
+                }}
+                disabled={loading}
+                placeholder="tu@correo.com"
+                className="h-10 rounded-md border border-border bg-surface px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary focus:border-interactive focus:ring-2 focus:ring-focus-ring disabled:opacity-60"
+              />
+            </div>
+
+            {/* Contraseña */}
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor="password"
+                className="text-sm font-medium text-text-primary"
+              >
+                Contraseña
+              </label>
+              <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface focus-within:border-interactive focus-within:ring-2 focus-within:ring-focus-ring">
+                <input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setError(null);
+                  }}
+                  disabled={loading}
+                  placeholder="••••••••"
+                  className="h-10 min-w-0 flex-1 bg-transparent px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary disabled:opacity-60"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={
+                    showPassword ? "Ocultar contraseña" : "Mostrar contraseña"
+                  }
+                  className="flex h-10 w-10 shrink-0 items-center justify-center text-text-tertiary hover:text-text-secondary"
+                >
+                  {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+                </button>
+              </div>
+            </div>
+
+            {/* Banner de error */}
+            {error && (
+              <div
+                role="alert"
+                className="flex items-start gap-2.5 rounded-md border border-error-200 bg-error-50 px-3.5 py-3"
+              >
+                <span className="mt-0.5 shrink-0 text-error-600">
+                  <AlertIcon />
+                </span>
+                <p className="text-sm leading-relaxed text-error-700">{error}</p>
+              </div>
+            )}
+
+            {/* Submit */}
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={loading}
+              className="mt-1 h-12 w-full text-base"
+            >
+              {loading ? (
+                <>
+                  <Spinner /> Verificando…
+                </>
+              ) : (
+                "Iniciar sesión"
+              )}
+            </Button>
+          </form>
+
+          {/* Pista de credenciales demo (SOLO desarrollo). Se inlinea el chequeo
+              de NODE_ENV para que la eliminación de código muerto la borre por
+              completo del bundle de producción (no solo evitar el render). */}
+          {process.env.NODE_ENV !== "production" && (
+            <div className="mt-7 rounded-md border border-brand-100 bg-brand-50 px-4 py-3.5">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-700">
+                Credenciales de prueba (solo desarrollo)
+              </p>
+              <div className="flex flex-col gap-1 text-sm text-text-secondary">
+                <p>
+                  <strong className="font-semibold text-text-primary">
+                    Marta:
+                  </strong>{" "}
+                  marta@ksecrm.mx / marta2026
+                </p>
+                <p>
+                  <strong className="font-semibold text-text-primary">
+                    Carlos:
+                  </strong>{" "}
+                  carlos@ksecrm.mx / carlos2026
+                </p>
+              </div>
+            </div>
+          )}
+
+          <p className="mt-7 text-center text-xs text-text-tertiary">
+            KSE CRM © 2026
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────── Iconos ───────────── */
+
+function EyeIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
+function AlertIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="8" x2="12" y2="12" />
+      <line x1="12" y1="16" x2="12.01" y2="16" />
+    </svg>
+  );
+}
+
+function Spinner() {
+  return (
+    <span
+      className="h-[18px] w-[18px] animate-spin rounded-full border-2 border-white/35 border-t-white"
+      aria-hidden
+    />
   );
 }

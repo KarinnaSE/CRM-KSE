@@ -3,6 +3,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { startOfTodayMx, startOfTomorrowMx } from "./dates";
+import { requireAuthUser } from "./authz";
 
 /**
  * Pantalla principal: Seguimientos (KAR-22) y sus funciones
@@ -78,7 +79,7 @@ async function toItem(
       user = await ctx.db.get(f.assignedTo);
       userCache.set(f.assignedTo, user);
     }
-    if (user) assignee = user.name;
+    if (user?.name) assignee = user.name;
   }
 
   return {
@@ -135,6 +136,8 @@ async function collectSection(
 export const pendientes = query({
   args: {},
   handler: async (ctx) => {
+    await requireAuthUser(ctx); // exige sesión activa (no solo el middleware)
+
     const now = Date.now();
     const startToday = startOfTodayMx(now);
     const startTomorrow = startOfTomorrowMx(now);
@@ -181,16 +184,15 @@ export const pendientes = query({
 /**
  * KAR-19: marcar un seguimiento como hecho, desde la lista.
  * Idempotente: si ya está "hecho", no-op (no pisa la trazabilidad). El actor
- * se valida contra `users` (se reemplazará por identidad real de auth, KAR-7).
+ * es el usuario autenticado (KAR-7): `completedBy` lo pone el sistema, no el
+ * cliente.
  */
 export const completar = mutation({
   args: {
     id: v.id("followups"),
-    actorId: v.id("users"),
   },
-  handler: async (ctx, { id, actorId }) => {
-    const actor = await ctx.db.get(actorId);
-    if (!actor) throw new Error("Usuario no válido.");
+  handler: async (ctx, { id }) => {
+    const user = await requireAuthUser(ctx);
 
     const followup = await ctx.db.get(id);
     if (!followup) throw new Error("El seguimiento no existe.");
@@ -198,7 +200,7 @@ export const completar = mutation({
     // compare-and-set: solo cerrar si sigue pendiente (evita doble cierre).
     if (followup.status === "hecho") return { ok: true };
 
-    await cerrarFollowup(ctx, id, actorId);
+    await cerrarFollowup(ctx, id, user._id);
     return { ok: true };
   },
 });

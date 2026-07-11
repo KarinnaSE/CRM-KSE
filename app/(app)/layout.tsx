@@ -1,16 +1,12 @@
-import { CurrentUserProvider } from "@/components/auth/CurrentUserProvider";
 import { AppShell } from "@/components/nav/AppShell";
 
 /**
  * Layout de las pantallas autenticadas del CRM.
- * Provee el "usuario actual" (stub hasta KAR-7) y monta la navegación
- * persistente responsive (KAR-24): barra superior en escritorio, barra
- * inferior + FAB en móvil. Administración es exclusiva del rol dueña.
+ * El middleware (KAR-7) ya garantiza que solo se llegue aquí con sesión; el
+ * `AppShell` obtiene el usuario real (api.users.me), cierra sesión si la cuenta
+ * está inactiva y monta la navegación persistente (KAR-24). Administración es
+ * exclusiva del rol dueña.
  */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <CurrentUserProvider>
-      <AppShell>{children}</AppShell>
-    </CurrentUserProvider>
-  );
+  return <AppShell>{children}</AppShell>;
 }

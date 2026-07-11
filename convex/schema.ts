@@ -1,12 +1,16 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { authTables } from "@convex-dev/auth/server";
 
 /**
  * Modelo de datos de KSE CRM.
  * Alineado con el PRD (Notion) y el proyecto CRM-MVP en Linear.
- * Incluye los ajustes de la etapa "Detalle-Diseño" (2026-07-07):
- *   - clients.company (Empresa / negocio, opcional) — KAR-5
- *   - users.active (estado activo/inactivo) — KAR-6 / KAR-89
+ *
+ * Autenticación (KAR-7): se incluyen las tablas de Convex Auth (`authTables`)
+ * y se PERSONALIZA la tabla `users` inlinando los campos base opcionales de
+ * `authTables.users` (según la versión instalada de @convex-dev/auth) y
+ * añadiendo los campos de dominio `role` / `active`. El acceso es fail-closed:
+ * solo `active === true` autoriza (ver convex/authz.ts).
  */
 
 // Las 5 etapas fijas del pipeline (no texto libre).
@@ -19,13 +23,32 @@ export const stageValidator = v.union(
 );
 
 export default defineSchema({
-  // ── Usuario ── Marta (dueña) y Carlos (vendedor); ampliable desde la app.
+  // ── Tablas de Convex Auth (authAccounts, authSessions, authRefreshTokens,
+  //    authVerificationCodes, authVerifiers, authRateLimits). `users` se
+  //    sobreescribe justo debajo, así que se excluye del spread.
+  ...(() => {
+    const { users: _authUsers, ...rest } = authTables;
+    return rest;
+  })(),
+
+  // ── Usuario ── Marta (dueña) y Carlos (vendedor).
+  // Inlina los campos base de `authTables.users` (todos opcionales) + dominio.
   users: defineTable({
-    name: v.string(),
-    email: v.string(),
-    role: v.union(v.literal("duena"), v.literal("vendedor")),
-    active: v.boolean(), // por defecto true; inactivo no puede iniciar sesión
-  }).index("by_email", ["email"]),
+    // Base de Convex Auth (v0.0.94):
+    name: v.optional(v.string()),
+    image: v.optional(v.string()),
+    email: v.optional(v.string()),
+    emailVerificationTime: v.optional(v.number()),
+    phone: v.optional(v.string()),
+    phoneVerificationTime: v.optional(v.number()),
+    isAnonymous: v.optional(v.boolean()),
+    // Dominio KSE (opcionales en el esquema; el provisionamiento SIEMPRE los
+    // rellena. En runtime, active!==true niega el acceso — fail-closed):
+    role: v.optional(v.union(v.literal("duena"), v.literal("vendedor"))),
+    active: v.optional(v.boolean()),
+  })
+    .index("email", ["email"])
+    .index("phone", ["phone"]),
 
   // ── Cliente ── dato central del CRM.
   clients: defineTable({

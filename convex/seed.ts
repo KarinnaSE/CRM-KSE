@@ -1,51 +1,56 @@
-import { mutation } from "./_generated/server";
+import { internalAction, internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { v } from "convex/values";
+import { createAccount } from "@convex-dev/auth/server";
 import { startOfTodayMx, startOfTomorrowMx } from "./dates";
 import { cerrarFollowup } from "./seguimientos";
 
 /**
- * Siembra de datos demo para la pantalla de Seguimientos.
+ * Siembra de datos demo para DESARROLLO (KAR-7).
  * Ejecutar: `npx convex run seed:seedDemo`
  *
- * Idempotente: limpia usuarios, clientes y seguimientos y los recrea.
- * Cubre cada caso del contrato: atrasado, hoy, futuro (excluido), hecho (con
- * trazabilidad válida vía cerrarFollowup), sin responsable ("Sin asignar") y
- * huérfano (cliente borrado ⇒ la fila se omite en la query).
+ * Es una `internalAction` (NO invocable desde un cliente/frontend), porque
+ * `createAccount` de Convex Auth requiere contexto de acción. Orquesta:
+ *   1) guarda ALLOW_DEMO_SEED (solo dev),
+ *   2) limpieza destructiva (internalMutation clearAll),
+ *   3) creación de las 2 cuentas Password (Marta/Carlos) con `createAccount`,
+ *   4) inserción de clientes + seguimientos demo (internalMutation insertDemoData).
+ *
+ * Contraseñas demo FIJAS (dev): marta@ksecrm.mx/marta2026, carlos@ksecrm.mx/carlos2026.
+ * En prod NO se usa esta función: ver convex/provisionUsers.ts.
  */
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 
-export const seedDemo = mutation({
+// ── Limpieza destructiva (SOLO dev). Incluye las tablas de Convex Auth para que
+//    un reseed no deje cuentas/sesiones colgadas. Orden: dependientes primero.
+export const clearAll = internalMutation({
   args: {},
   handler: async (ctx) => {
-    // ── Limpieza (idempotencia) ──
-    // Se borran primero las tablas dependientes (interactions, sales) para no
-    // dejar filas colgando que apunten a clientes/usuarios eliminados.
     for (const table of [
       "followups",
       "interactions",
       "sales",
       "clients",
+      "authRateLimits",
+      "authVerifiers",
+      "authVerificationCodes",
+      "authRefreshTokens",
+      "authSessions",
+      "authAccounts",
       "users",
     ] as const) {
       for (const row of await ctx.db.query(table).collect()) {
         await ctx.db.delete(row._id);
       }
     }
+  },
+});
 
-    // ── Usuarios ──
-    const marta = await ctx.db.insert("users", {
-      name: "Marta López",
-      email: "marta@ksecrm.mx",
-      role: "duena",
-      active: true,
-    });
-    const carlos = await ctx.db.insert("users", {
-      name: "Carlos Rueda",
-      email: "carlos@ksecrm.mx",
-      role: "vendedor",
-      active: true,
-    });
-
+// ── Inserta clientes + seguimientos demo usando ids de usuario ya provisionados.
+export const insertDemoData = internalMutation({
+  args: { martaId: v.id("users"), carlosId: v.id("users") },
+  handler: async (ctx, { martaId: marta, carlosId: carlos }) => {
     // ── Clientes (etapas variadas) ──
     const roberto = await ctx.db.insert("clients", {
       name: "Roberto Méndez", company: "Taquería Los Compadres",
@@ -136,6 +141,44 @@ export const seedDemo = mutation({
     });
     await ctx.db.delete(temporal); // el followup queda huérfano ⇒ se omite
 
-    return { users: 2, clients: 5, note: "seed listo (1 cliente borrado a propósito)" };
+    return { clients: 5, note: "1 cliente borrado a propósito" };
+  },
+});
+
+// ── Orquestador (SOLO dev). internalAction: createAccount necesita ctx de acción.
+export const seedDemo = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    if (!process.env.ALLOW_DEMO_SEED) {
+      throw new Error(
+        "seedDemo deshabilitado: falta la variable ALLOW_DEMO_SEED (solo dev).",
+      );
+    }
+
+    await ctx.runMutation(internal.seed.clearAll, {});
+
+    const marta = await createAccount(ctx, {
+      provider: "password",
+      account: { id: "marta@ksecrm.mx", secret: "marta2026" },
+      profile: {
+        name: "Marta López", email: "marta@ksecrm.mx",
+        role: "duena", active: true,
+      },
+    });
+    const carlos = await createAccount(ctx, {
+      provider: "password",
+      account: { id: "carlos@ksecrm.mx", secret: "carlos2026" },
+      profile: {
+        name: "Carlos Rueda", email: "carlos@ksecrm.mx",
+        role: "vendedor", active: true,
+      },
+    });
+
+    await ctx.runMutation(internal.seed.insertDemoData, {
+      martaId: marta.user._id,
+      carlosId: carlos.user._id,
+    });
+
+    return { users: 2, clients: 5, note: "seed dev listo" };
   },
 });
