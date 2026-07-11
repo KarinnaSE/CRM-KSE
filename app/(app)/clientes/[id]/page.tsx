@@ -1,9 +1,10 @@
+import { FichaClient } from "./FichaClient";
+
 /**
- * Pantalla: Ficha del cliente — pantalla central del CRM.
- * Datos de contacto, etapa (cambiable), historial unificado (notas +
- * seguimientos + ventas), y acciones: agregar nota, programar seguimiento,
- * registrar venta.
- * Diseño: Design/…/Ficha.dc.html · Linear: KAR-17, KAR-15, KAR-16.
+ * Ficha del cliente (KAR-17). Server Component fino: resuelve el id de la ruta y delega la
+ * pantalla interactiva a FichaClient (Client Component). El id se pasa como string y lo valida
+ * el backend (clients.get / historial con normalizeId); un id malformado o inexistente muestra
+ * "Cliente no encontrado".
  */
 export default async function FichaClientePage({
   params,
@@ -11,12 +12,5 @@ export default async function FichaClientePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return (
-    <section className="mx-auto max-w-4xl p-6">
-      <h1 className="text-2xl font-bold text-text-primary">Ficha del cliente</h1>
-      <p className="mt-2 text-base text-text-secondary">
-        Cliente <code>{id}</code> — pendiente de construir.
-      </p>
-    </section>
-  );
+  return <FichaClient clientId={id} />;
 }

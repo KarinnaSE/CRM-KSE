@@ -1,8 +1,8 @@
 import { query, mutation } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { v } from "convex/values";
-import { startOfTodayMx, startOfTomorrowMx } from "./dates";
+import { v, ConvexError } from "convex/values";
+import { startOfTodayMx, startOfTomorrowMx, mxDateStringToEpoch } from "./dates";
 import { requireAuthUser } from "./authz";
 
 /**
@@ -202,5 +202,37 @@ export const completar = mutation({
 
     await cerrarFollowup(ctx, id, user._id);
     return { ok: true };
+  },
+});
+
+/**
+ * KAR-18: programar un seguimiento desde la Ficha del cliente.
+ * `requireAuthUser` primero. `createdBy` y `assignedTo` se sellan con el usuario de la sesión
+ * (AUTO-ASIGNADO: quien lo crea es el responsable — decisión de producto). Se crea SIEMPRE
+ * "pendiente", sin `completedAt`/`completedBy` (respeta el invariante: ausentes ⟺ pendiente).
+ * La fecha llega como "YYYY-MM-DD" y se valida/convierte con `mxDateStringToEpoch`.
+ */
+export const crear = mutation({
+  args: {
+    clientId: v.id("clients"),
+    dueDate: v.string(),
+    reason: v.string(),
+  },
+  handler: async (ctx, { clientId, dueDate, reason }) => {
+    const user = await requireAuthUser(ctx);
+
+    if (!reason.trim()) throw new ConvexError("El motivo es obligatorio.");
+
+    const client = await ctx.db.get(clientId);
+    if (!client) throw new ConvexError("El cliente no existe.");
+
+    return await ctx.db.insert("followups", {
+      clientId,
+      dueDate: mxDateStringToEpoch(dueDate),
+      reason: reason.trim(),
+      status: "pendiente",
+      assignedTo: user._id, // auto-asignado al creador
+      createdBy: user._id,
+    });
   },
 });

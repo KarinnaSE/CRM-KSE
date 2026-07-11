@@ -141,7 +141,31 @@ export const insertDemoData = internalMutation({
     });
     await ctx.db.delete(temporal); // el followup queda huérfano ⇒ se omite
 
-    return { clients: 5, note: "1 cliente borrado a propósito" };
+    // ── Historial de María (KAR-15/17/23): notas de canales distintos + una venta ──
+    // Junto con sus followups (ya tiene 1 pendiente y 1 hecho arriba) permiten verificar la
+    // FUSIÓN del historial y el orden occurredAt DESC + desempate _creationTime DESC (las dos
+    // interacciones del mismo día ejercen el desempate).
+    await ctx.db.insert("interactions", {
+      clientId: maria, channel: "llamada", date: startToday - 3 * DAY,
+      text: "Primer contacto. Preguntó por precios del pack básico.",
+      authorId: carlos,
+    });
+    await ctx.db.insert("interactions", {
+      clientId: maria, channel: "whatsapp", date: startToday - 2 * DAY,
+      text: "Enviada propuesta del pack inicial de 50 unidades con precio por volumen.",
+      authorId: marta,
+    });
+    await ctx.db.insert("interactions", {
+      clientId: maria, channel: "email", date: startToday - 2 * DAY, // mismo día ⇒ desempate
+      text: "Respondió por correo: interesada, pide una demo antes de decidir.",
+      authorId: carlos,
+    });
+    await ctx.db.insert("sales", {
+      clientId: maria, productType: "consultoria", amount: 15000,
+      date: startToday - DAY, registeredBy: marta,
+    });
+
+    return { clients: 5, note: "1 cliente borrado a propósito; historial de María sembrado" };
   },
 });
 
