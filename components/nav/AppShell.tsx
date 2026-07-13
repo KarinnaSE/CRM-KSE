@@ -78,10 +78,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          <Link href="/clientes/nuevo">
-            <Button variant="primary" size="sm">
-              <PlusIcon /> Agregar cliente
-            </Button>
+          <Link
+            href="/clientes/nuevo"
+            className="inline-flex h-8 items-center justify-center gap-2 rounded-full bg-interactive px-3 text-sm font-semibold text-text-on-brand transition-colors hover:bg-interactive-hover active:bg-interactive-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+          >
+            <PlusIcon /> Agregar cliente
           </Link>
           <BellInert />
           <button
