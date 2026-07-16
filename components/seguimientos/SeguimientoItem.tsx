@@ -19,6 +19,28 @@ export type Seguimiento = {
   dueDate: number;
 };
 
+// Formateadores CDMX creados UNA vez a nivel de módulo (no por fila): en listas de
+// hasta ~150 filas evita recrear Intl.DateTimeFormat en cada render.
+const MX_TZ = "America/Mexico_City";
+const LATE_FMT = new Intl.DateTimeFormat("es-MX", {
+  timeZone: MX_TZ,
+  day: "numeric",
+  month: "short",
+});
+const UPCOMING_FMT = new Intl.DateTimeFormat("es-MX", {
+  timeZone: MX_TZ,
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+});
+
+/** Etiqueta de fecha según la sección: "Hoy", "Atrasado · 14 jul" o "mié 22 jul". */
+function dueLabel(variant: "late" | "today" | "upcoming", dueDate: number): string {
+  if (variant === "today") return "Hoy";
+  if (variant === "late") return `Atrasado · ${LATE_FMT.format(dueDate)}`;
+  return UPCOMING_FMT.format(dueDate);
+}
+
 /**
  * Fila de un seguimiento. Al tocarla navega a la Ficha del cliente
  * (/clientes/[id]); el botón "Hecho" cierra el seguimiento sin navegar.
@@ -31,7 +53,7 @@ export function SeguimientoItem({
   onComplete,
 }: {
   item: Seguimiento;
-  variant: "late" | "today";
+  variant: "late" | "today" | "upcoming";
   onComplete: (id: string) => Promise<void>;
 }) {
   const router = useRouter();
@@ -97,10 +119,21 @@ export function SeguimientoItem({
           {item.reason}
         </p>
 
-        <p className="mt-1 flex items-center gap-1 text-xs text-text-tertiary">
-          <UserIcon />
-          {item.assignee}
-        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-tertiary">
+          <span
+            className={cn(
+              "flex items-center gap-1",
+              late && "font-medium text-error-600",
+            )}
+          >
+            <CalendarIcon />
+            {dueLabel(variant, item.dueDate)}
+          </span>
+          <span className="flex items-center gap-1">
+            <UserIcon />
+            {item.assignee}
+          </span>
+        </div>
       </div>
 
       <button
@@ -136,6 +169,16 @@ function UserIcon() {
       stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
       <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <path d="M16 2v4M8 2v4M3 10h18" />
     </svg>
   );
 }

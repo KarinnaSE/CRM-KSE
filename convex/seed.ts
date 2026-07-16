@@ -118,10 +118,21 @@ export const insertDemoData = internalMutation({
       status: "pendiente", createdBy: carlos, // sin assignedTo → "Sin asignar"
     });
 
-    // 1 pendiente-futuro (excluido de la pantalla)
+    // 3 pendiente-futuro (sección "Próximos", colapsada por defecto en la UI).
+    // Fechas escalonadas para validar el orden ascendente por dueDate.
     await ctx.db.insert("followups", {
       clientId: roberto, dueDate: startTomorrow + 10 * HOUR,
       reason: "Reunión de cierre agendada para mañana.",
+      status: "pendiente", assignedTo: carlos, createdBy: carlos,
+    });
+    await ctx.db.insert("followups", {
+      clientId: maria, dueDate: startTomorrow + 2 * DAY + 9 * HOUR,
+      reason: "Enviar contrato para firma tras la demo.",
+      status: "pendiente", assignedTo: marta, createdBy: marta,
+    });
+    await ctx.db.insert("followups", {
+      clientId: luis, dueDate: startTomorrow + 5 * DAY + 14 * HOUR,
+      reason: "Llamada de seguimiento la próxima semana.",
       status: "pendiente", assignedTo: carlos, createdBy: carlos,
     });
 
