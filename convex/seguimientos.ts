@@ -128,10 +128,12 @@ async function collectSection(
 }
 
 /**
- * KAR-20 + KAR-21: pendientes atrasados y de hoy.
- * Range-scan indexado por `by_status_dueDate` (excluye "hecho" y futuros en
- * backend, no en memoria). Orden `dueDate` asc + desempate `_creationTime`
- * (implícito en el índice). Máx 50 VÁLIDOS por sección + flag `hasMore`.
+ * KAR-20 + KAR-21 + Próximos: pendientes atrasados, de hoy y futuros.
+ * Range-scan indexado por `by_status_dueDate` (excluye "hecho" en backend, no en
+ * memoria). Orden `dueDate` asc + desempate `_creationTime` (implícito en el
+ * índice) ⇒ el más cercano primero. Máx 50 VÁLIDOS por sección + flag `hasMore`.
+ * "Próximos" (dueDate >= inicio de mañana) es opt-in en la UI: se muestra bajo un
+ * checkbox, colapsado por defecto.
  */
 export const pendientes = query({
   args: {},
@@ -172,11 +174,32 @@ export const pendientes = query({
       userCache,
     );
 
+    // Próximos: pendiente y dueDate >= inicio de mañana (todos los futuros).
+    const proximos = await collectSection(
+      ctx,
+      ctx.db
+        .query("followups")
+        .withIndex("by_status_dueDate", (q) =>
+          q.eq("status", "pendiente").gte("dueDate", startTomorrow),
+        ),
+      clientCache,
+      userCache,
+    );
+
     return {
       overdue: overdue.items,
       today: today.items,
-      counts: { overdue: overdue.items.length, today: today.items.length },
-      hasMore: { overdue: overdue.hasMore, today: today.hasMore },
+      proximos: proximos.items,
+      counts: {
+        overdue: overdue.items.length,
+        today: today.items.length,
+        proximos: proximos.items.length,
+      },
+      hasMore: {
+        overdue: overdue.hasMore,
+        today: today.hasMore,
+        proximos: proximos.hasMore,
+      },
     };
   },
 });

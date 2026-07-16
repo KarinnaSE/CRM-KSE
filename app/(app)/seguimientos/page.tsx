@@ -59,6 +59,8 @@ export default function SeguimientosPage() {
 
   const [query, setQuery] = useState("");
   const [toast, setToast] = useState<string | null>(null);
+  // "Próximos" (futuros) colapsados por defecto: el usuario decide desplegarlos.
+  const [showProximos, setShowProximos] = useState(false);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -76,8 +78,13 @@ export default function SeguimientosPage() {
   }
 
   const q = normalize(query);
-  const { overdue, today } = useMemo(() => {
-    if (!data) return { overdue: [] as Seguimiento[], today: [] as Seguimiento[] };
+  const { overdue, today, proximos } = useMemo(() => {
+    if (!data)
+      return {
+        overdue: [] as Seguimiento[],
+        today: [] as Seguimiento[],
+        proximos: [] as Seguimiento[],
+      };
     const match = (i: Seguimiento) =>
       !q ||
       normalize(i.clientName).includes(q) ||
@@ -85,6 +92,7 @@ export default function SeguimientosPage() {
     return {
       overdue: (data.overdue as Seguimiento[]).filter(match),
       today: (data.today as Seguimiento[]).filter(match),
+      proximos: (data.proximos as Seguimiento[]).filter(match),
     };
   }, [data, q]);
 
@@ -132,12 +140,19 @@ export default function SeguimientosPage() {
           <Body
             overdue={overdue}
             today={today}
+            proximos={proximos}
             hasMore={data.hasMore}
             hasQuery={query.trim().length > 0}
-            rawEmpty={data.overdue.length === 0 && data.today.length === 0}
+            rawEmpty={
+              data.overdue.length === 0 &&
+              data.today.length === 0 &&
+              data.proximos.length === 0
+            }
             query={query}
+            showProximos={showProximos}
             onComplete={onComplete}
             onClearQuery={() => setQuery("")}
+            onToggleProximos={() => setShowProximos((v) => !v)}
           />
         )}
       </div>
@@ -158,29 +173,35 @@ export default function SeguimientosPage() {
 function Body({
   overdue,
   today,
+  proximos,
   hasMore,
   hasQuery,
   rawEmpty,
   query,
+  showProximos,
   onComplete,
   onClearQuery,
+  onToggleProximos,
 }: {
   overdue: Seguimiento[];
   today: Seguimiento[];
-  hasMore: { overdue: boolean; today: boolean };
+  proximos: Seguimiento[];
+  hasMore: { overdue: boolean; today: boolean; proximos: boolean };
   hasQuery: boolean;
   rawEmpty: boolean;
   query: string;
+  showProximos: boolean;
   onComplete: (id: string) => Promise<void>;
   onClearQuery: () => void;
+  onToggleProximos: () => void;
 }) {
-  // Vacío total (sin datos y sin búsqueda) → "Todo al día".
+  // Vacío total (sin datos crudos en las tres secciones y sin búsqueda) → "Todo al día".
   if (rawEmpty && !hasQuery) {
     return (
       <EmptyState
         tone="success"
         title="Todo al día"
-        text="No tienes seguimientos atrasados ni programados para hoy. Buen trabajo."
+        text="No tienes seguimientos atrasados, de hoy ni próximos. Buen trabajo."
         action={
           <Link href="/clientes">
             <Button variant="secondary" size="sm">
@@ -192,13 +213,13 @@ function Body({
     );
   }
 
-  // Búsqueda sin resultados.
-  if (overdue.length === 0 && today.length === 0) {
+  // Búsqueda sin resultados en NINGUNA de las tres secciones.
+  if (hasQuery && overdue.length === 0 && today.length === 0 && proximos.length === 0) {
     return (
       <EmptyState
         tone="neutral"
         title={`Sin seguimientos para «${query.trim()}»`}
-        text="No hay seguimientos pendientes para ese cliente hoy."
+        text="No hay seguimientos pendientes para ese cliente."
         action={
           <Button variant="secondary" size="sm" onClick={onClearQuery}>
             Limpiar búsqueda
@@ -207,6 +228,8 @@ function Body({
       />
     );
   }
+
+  const noPrimary = overdue.length === 0 && today.length === 0;
 
   return (
     <div className="space-y-6">
@@ -244,6 +267,86 @@ function Body({
             />
           ))}
         </Section>
+      )}
+
+      {/* Sin atrasados/hoy pero con futuros (sin búsqueda): nota + control de Próximos. */}
+      {noPrimary && !hasQuery && proximos.length > 0 && (
+        <p className="text-sm text-text-secondary">
+          Nada para hoy. Consulta los próximos abajo.
+        </p>
+      )}
+
+      {proximos.length > 0 && (
+        <ProximosSection
+          items={proximos}
+          count={proximos.length}
+          show={showProximos}
+          hasMore={hasMore.proximos}
+          onToggle={onToggleProximos}
+          onComplete={onComplete}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Sección "Próximos" (futuros): su cabecera ES el control. Un checkbox despliega
+ * u oculta la lista; el badge muestra el conteo VISIBLE (ya filtrado por la
+ * búsqueda). Colapsada por defecto.
+ */
+function ProximosSection({
+  items,
+  count,
+  show,
+  hasMore,
+  onToggle,
+  onComplete,
+}: {
+  items: Seguimiento[];
+  count: number;
+  show: boolean;
+  hasMore: boolean;
+  onToggle: () => void;
+  onComplete: (id: string) => Promise<void>;
+}) {
+  return (
+    <div>
+      <label className="mb-2 flex cursor-pointer select-none items-center gap-2">
+        <input
+          type="checkbox"
+          checked={show}
+          onChange={onToggle}
+          className="h-4 w-4 rounded border border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+          style={{ accentColor: "var(--interactive)" }}
+        />
+        <span className="text-xs font-bold uppercase tracking-wide text-text-secondary">
+          Próximos
+        </span>
+        <span
+          className="rounded-full px-2 py-0.5 text-xs font-semibold"
+          style={{ backgroundColor: "var(--bg-surface-2)", color: "var(--text-secondary)" }}
+        >
+          {count}
+        </span>
+      </label>
+
+      {show && (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <SeguimientoItem
+              key={item.id}
+              item={item}
+              variant="upcoming"
+              onComplete={onComplete}
+            />
+          ))}
+          {hasMore && (
+            <p className="mt-2 text-xs text-text-tertiary">
+              Hay más pendientes de los mostrados.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
