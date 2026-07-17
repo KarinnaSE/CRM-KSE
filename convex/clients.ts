@@ -15,10 +15,11 @@ import { requireAuthUser } from "./authz";
 const HISTORY_LIMIT = 100;
 
 /**
- * Item del historial unificado de la ficha (KAR-15/17/18/23). Unión DISCRIMINADA por `kind`:
+ * Item del historial de la ficha (KAR-15/17/18/23). Unión DISCRIMINADA por `kind`:
  * cada tipo trae solo sus campos obligatorios (sin opcionales ambiguos). `occurredAt` es el
  * epoch usado para ordenar y mostrar; `author` es el nombre resuelto (fallback
- * "Usuario eliminado" si el usuario ya no existe).
+ * "Usuario eliminado" si el usuario ya no existe). La ficha lo expone en DOS listas separadas:
+ * `interacciones` (nota + seguimiento) y `ventas`.
  */
 type TimelineItem =
   | {
@@ -46,6 +47,10 @@ type TimelineItem =
       productType: "formacion" | "consultoria" | "plantilla" | "otro";
       amount: number;
     };
+
+// Subconjuntos por lista: garantiza que las interacciones nunca contengan ventas y viceversa.
+type InteractionTimelineItem = Extract<TimelineItem, { kind: "nota" | "seguimiento" }>;
+type SaleTimelineItem = Extract<TimelineItem, { kind: "venta" }>;
 
 // Lista todos los clientes (más recientes primero).
 export const list = query({
@@ -119,21 +124,35 @@ export const updateStage = mutation({
 });
 
 /**
- * Historial UNIFICADO de la actividad de un cliente (KAR-15/17/18/23): notas + seguimientos +
- * ventas, fusionados en un solo stream cronológico (más reciente primero).
+ * Historial de la actividad de un cliente (KAR-15/17/18/23), en DOS listas separadas para que las
+ * ventas se vean fácilmente y no queden revueltas con el resto:
+ *   - `interacciones`: notas + seguimientos, fusionados y cronológicos (más reciente primero).
+ *   - `ventas`: solo ventas, cronológicas, con `ventasTotal` (suma de montos).
  *
- * AUTH PRIMERO; luego `normalizeId` (id malformado → historial vacío controlado).
+ * AUTH PRIMERO; luego `normalizeId` (id malformado → ambas listas vacías, contrato completo).
  * ACOTADO (hot-path): de cada fuente se traen a lo sumo HISTORY_LIMIT+1 filas por su índice
- * `by_client` (orden por `_creationTime` desc), se fusionan, se ORDENA por `occurredAt` desc y,
- * a igualdad, `_creationTime` desc, se corta a HISTORY_LIMIT y se expone `hasMore`. Los autores
- * se resuelven con un cache para no repetir `db.get`.
+ * `by_client` (orden por `_creationTime` desc); cada lista se ORDENA por `occurredAt` desc y, a
+ * igualdad, `_creationTime` desc, se corta a HISTORY_LIMIT y expone su `hasMore`. Los autores se
+ * resuelven con un cache para no repetir `db.get`.
+ *
+ * `ventasTotal` suma las ventas MOSTRADAS (tras el corte a HISTORY_LIMIT): exacto con ≤100 ventas
+ * (caso real). Si `hasMore.ventas`, es el total de las mostradas (la UI lo señala con "+"). LIMITACIÓN HEREDADA: al
+ * acotar por `_creationTime` y ordenar por `occurredAt`, con >101 filas en una fuente y fechas
+ * backdated/future-dated el corte no garantiza estrictamente las 100 más recientes por `occurredAt`.
  */
 export const historial = query({
   args: { clientId: v.string() },
   handler: async (ctx, { clientId }) => {
     await requireAuthUser(ctx);
     const cid = ctx.db.normalizeId("clients", clientId);
-    if (!cid) return { items: [] as TimelineItem[], hasMore: false };
+    if (!cid) {
+      return {
+        interacciones: [] as InteractionTimelineItem[],
+        ventas: [] as SaleTimelineItem[],
+        ventasTotal: 0,
+        hasMore: { interacciones: false, ventas: false },
+      };
+    }
 
     const cap = HISTORY_LIMIT + 1;
     const [interactions, followups, sales] = await Promise.all([
@@ -166,10 +185,16 @@ export const historial = query({
       return u?.name ?? "Usuario eliminado";
     };
 
-    const rows: { item: TimelineItem; ct: number }[] = [];
+    // Orden común: occurredAt DESC, desempate _creationTime DESC (lo más reciente primero).
+    const byRecency = <T extends TimelineItem>(
+      a: { item: T; ct: number },
+      b: { item: T; ct: number },
+    ) => b.item.occurredAt - a.item.occurredAt || b.ct - a.ct;
 
+    // ── Interacciones: notas + seguimientos ──
+    const interRows: { item: InteractionTimelineItem; ct: number }[] = [];
     for (const i of interactions) {
-      rows.push({
+      interRows.push({
         ct: i._creationTime,
         item: {
           id: i._id,
@@ -185,7 +210,7 @@ export const historial = query({
       const done = f.status === "hecho";
       // Autor: si está hecho, quien lo cerró (fallback a quien lo creó); si no, el creador.
       const authorId = done ? f.completedBy ?? f.createdBy : f.createdBy;
-      rows.push({
+      interRows.push({
         ct: f._creationTime,
         item: {
           id: f._id,
@@ -198,8 +223,13 @@ export const historial = query({
         },
       });
     }
+    interRows.sort(byRecency);
+    const interHasMore = interRows.length > HISTORY_LIMIT;
+
+    // ── Ventas ──
+    const ventaRows: { item: SaleTimelineItem; ct: number }[] = [];
     for (const s of sales) {
-      rows.push({
+      ventaRows.push({
         ct: s._creationTime,
         item: {
           id: s._id,
@@ -211,11 +241,16 @@ export const historial = query({
         },
       });
     }
+    ventaRows.sort(byRecency);
+    const ventaHasMore = ventaRows.length > HISTORY_LIMIT;
+    const ventas = ventaRows.slice(0, HISTORY_LIMIT).map((r) => r.item);
+    const ventasTotal = ventas.reduce((sum, v) => sum + v.amount, 0);
 
-    // Orden: occurredAt DESC, desempate _creationTime DESC (lo más reciente primero).
-    rows.sort((a, b) => b.item.occurredAt - a.item.occurredAt || b.ct - a.ct);
-
-    const hasMore = rows.length > HISTORY_LIMIT;
-    return { items: rows.slice(0, HISTORY_LIMIT).map((r) => r.item), hasMore };
+    return {
+      interacciones: interRows.slice(0, HISTORY_LIMIT).map((r) => r.item),
+      ventas,
+      ventasTotal,
+      hasMore: { interacciones: interHasMore, ventas: ventaHasMore },
+    };
   },
 });

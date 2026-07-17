@@ -4,8 +4,8 @@ import { requireAuthUser } from "./authz";
 import { mxDateStringToEpoch } from "./dates";
 
 /**
- * Interacciones / notas de un cliente (KAR-15). Se leen desde el historial unificado de la
- * ficha (`clients.historial`); aquí vive solo la ESCRITURA.
+ * Interacciones / notas de un cliente (KAR-15). Se leen desde la ficha (`clients.historial`), en la
+ * lista de interacciones (notas + seguimientos); aquí vive solo la ESCRITURA.
  *
  * Regla KAR-7: `requireAuthUser` primero y `authorId` sellado desde la sesión (nunca de args).
  * La fecha llega como "YYYY-MM-DD" y se valida/convierte en el servidor con
