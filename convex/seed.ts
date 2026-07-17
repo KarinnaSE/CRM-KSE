@@ -175,6 +175,11 @@ export const insertDemoData = internalMutation({
       clientId: maria, productType: "consultoria", amount: 15000,
       date: startToday - DAY, registeredBy: marta,
     });
+    // 2.ª venta de María: monto distinto para validar contador (2) y total ($15,000 + $8,500).
+    await ctx.db.insert("sales", {
+      clientId: maria, productType: "formacion", amount: 8500,
+      date: startToday - 5 * DAY, registeredBy: carlos,
+    });
 
     return { clients: 5, note: "1 cliente borrado a propósito; historial de María sembrado" };
   },

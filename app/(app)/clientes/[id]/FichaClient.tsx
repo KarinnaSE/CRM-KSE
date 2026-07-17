@@ -15,8 +15,9 @@ import { mxDateInputValue } from "@/components/clientes/format";
 
 /**
  * Ficha del cliente (KAR-17) — pantalla central del CRM. Reúne la tarjeta del cliente
- * (con etapa cambiable, KAR-16) y el historial unificado (notas KAR-15 + seguimientos KAR-18 +
- * ventas KAR-23), con 4 modales de acción. El chrome global (header/nav/perfil) lo da AppShell;
+ * (con etapa cambiable, KAR-16) y el historial en dos listas: interacciones (notas KAR-15 +
+ * seguimientos KAR-18) y ventas (KAR-23, lista independiente), con 4 modales de acción. El chrome
+ * global (header/nav/perfil) lo da AppShell;
  * aquí solo va el contenido. Los datos vienen de `clients.get` / `clients.historial`; las
  * escrituras sellan el usuario en el backend.
  */
@@ -82,8 +83,10 @@ export function FichaClient({ clientId }: { clientId: string }) {
           </div>
           <div className="min-w-0 flex-1">
             <HistoryTimeline
-              items={historial?.items ?? []}
-              hasMore={historial?.hasMore ?? false}
+              interacciones={historial?.interacciones ?? []}
+              ventas={historial?.ventas ?? []}
+              ventasTotal={historial?.ventasTotal ?? 0}
+              hasMore={historial?.hasMore ?? { interacciones: false, ventas: false }}
               loading={historial === undefined}
               onAddNota={() => setModal("nota")}
             />

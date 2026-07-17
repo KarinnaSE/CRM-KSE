@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/Button";
 import { formatMxDate, formatMxn } from "./format";
 
 type Historial = FunctionReturnType<typeof api.clients.historial>;
-export type TimelineItem = Historial["items"][number];
+type InteractionItem = Historial["interacciones"][number];
+type SaleItem = Historial["ventas"][number];
+export type TimelineItem = InteractionItem | SaleItem;
 
 const CHANNEL_LABELS = {
   whatsapp: "WhatsApp",
@@ -22,49 +24,92 @@ const PRODUCT_LABELS = {
 } as const;
 
 /**
- * Panel principal de la Ficha (KAR-17): historial unificado de notas + seguimientos + ventas,
- * más reciente primero. Cabecera con contador, estado vacío con CTA, y aviso "hay más" cuando
- * el historial supera la cota del backend.
+ * Panel principal de la Ficha (KAR-17): la actividad del cliente en DOS listas separadas —
+ * "Historial de interacciones" (notas + seguimientos) y, debajo, "Ventas" (independiente, con
+ * contador y total en dinero) para que las ventas se vean fácilmente y no queden revueltas. Cada
+ * lista tiene su contador, su estado vacío y su aviso "hay más" cuando supera la cota del backend.
  */
 export function HistoryTimeline({
-  items,
+  interacciones,
+  ventas,
+  ventasTotal,
   hasMore,
   loading,
   onAddNota,
 }: {
-  items: TimelineItem[];
-  hasMore: boolean;
+  interacciones: InteractionItem[];
+  ventas: SaleItem[];
+  ventasTotal: number;
+  hasMore: { interacciones: boolean; ventas: boolean };
   loading: boolean;
   onAddNota: () => void;
 }) {
   return (
-    <div>
-      <div className="mb-3 flex items-center gap-2">
-        <span className="text-xs font-bold uppercase tracking-wide text-text-tertiary">
-          Historial de interacciones
-        </span>
-        {!loading && (
-          <span className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-xs font-semibold text-text-secondary">
-            {items.length}
+    <div className="flex flex-col gap-8">
+      {/* ── Historial de interacciones (notas + seguimientos, sin ventas) ── */}
+      <section>
+        <div className="mb-3 flex items-center gap-2">
+          <span className="text-xs font-bold uppercase tracking-wide text-text-tertiary">
+            Historial de interacciones
           </span>
-        )}
-      </div>
-
-      {loading ? (
-        <TimelineSkeleton />
-      ) : items.length === 0 ? (
-        <EmptyHistory onAddNota={onAddNota} />
-      ) : (
-        <div className="flex flex-col gap-2">
-          {items.map((item) => (
-            <HistoryRow key={`${item.kind}-${item.id}`} item={item} />
-          ))}
-          {hasMore && (
-            <p className="mt-1 text-xs text-text-tertiary">
-              Hay más actividad de la mostrada.
-            </p>
+          {!loading && (
+            <span className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-xs font-semibold text-text-secondary">
+              {interacciones.length}
+            </span>
           )}
         </div>
+
+        {loading ? (
+          <TimelineSkeleton />
+        ) : interacciones.length === 0 ? (
+          <EmptyHistory onAddNota={onAddNota} />
+        ) : (
+          <div className="flex flex-col gap-2">
+            {interacciones.map((item) => (
+              <HistoryRow key={`${item.kind}-${item.id}`} item={item} />
+            ))}
+            {hasMore.interacciones && (
+              <p className="mt-1 text-xs text-text-tertiary">
+                Hay más interacciones de las mostradas.
+              </p>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* ── Ventas (lista independiente). Oculta durante loading para no mostrar 0/$0.00 falso. ── */}
+      {!loading && (
+        <section>
+          <div className="mb-3 flex items-center gap-2">
+            <span className="text-xs font-bold uppercase tracking-wide text-text-tertiary">
+              Ventas
+            </span>
+            <span className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-xs font-semibold text-text-secondary">
+              {ventas.length}
+            </span>
+            {ventas.length > 0 && (
+              <span className="ml-auto text-sm font-bold text-success-700">
+                {formatMxn(ventasTotal)}
+                {hasMore.ventas ? "+" : ""}
+              </span>
+            )}
+          </div>
+
+          {ventas.length === 0 ? (
+            <p className="text-sm text-text-tertiary">Sin ventas registradas.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {ventas.map((item) => (
+                <HistoryRow key={`${item.kind}-${item.id}`} item={item} />
+              ))}
+              {hasMore.ventas && (
+                <p className="mt-1 text-xs text-text-tertiary">
+                  Hay más ventas de las mostradas.
+                </p>
+              )}
+            </div>
+          )}
+        </section>
       )}
     </div>
   );
