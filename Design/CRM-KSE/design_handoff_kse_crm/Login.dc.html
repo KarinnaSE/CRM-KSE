@@ -32,6 +32,7 @@
     .pwd-wrap.has-error { border-color: var(--error-500);  box-shadow: 0 0 0 3px oklch(0.97 0.025 25 / 0.5); }
     .pwd-native::placeholder { color: var(--text-tertiary); }
     .pwd-toggle:hover { color: var(--text-secondary) !important; }
+    .google-btn:hover:not(:disabled) { background: var(--bg-surface-2) !important; }
 
     .error-banner { animation: fadein 160ms ease both; }
 
@@ -188,13 +189,47 @@
 
         </form>
 
+        <!-- Separador -->
+        <div style="display:flex;align-items:center;gap:12px;margin:20px 0" aria-hidden="true">
+          <div style="flex:1;height:1px;background:var(--border)"></div>
+          <span style="font-family:var(--font-family);font-size:var(--text-xs);font-weight:500;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.05em">o</span>
+          <div style="flex:1;height:1px;background:var(--border)"></div>
+        </div>
+
+        <!-- Continuar con Google -->
+        <button
+          type="button"
+          class="google-btn"
+          onClick="{{ doGoogle }}"
+          disabled="{{ busy }}"
+          style="display:flex;align-items:center;justify-content:center;gap:12px;width:100%;height:48px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-surface);font-family:var(--font-family);font-size:var(--text-base);font-weight:500;color:var(--text-primary);cursor:pointer;transition:background 120ms"
+        >
+          <sc-if value="{{ googleLoading }}" hint-placeholder-val="{{ false }}">
+            <span style="display:flex;align-items:center;gap:10px">
+              <span style="width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--text-secondary);border-radius:50%;animation:spin 0.7s linear infinite"></span>
+              Conectando…
+            </span>
+          </sc-if>
+          <sc-if value="{{ notGoogleLoading }}" hint-placeholder-val="{{ true }}">
+            <span style="display:flex;align-items:center;gap:10px">
+              <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+              </svg>
+              Continuar con Google
+            </span>
+          </sc-if>
+        </button>
+
         <!-- Hint de credenciales (solo demo) -->
         <sc-if value="{{ showDemoHint }}" hint-placeholder-val="{{ true }}">
           <div style="margin-top:28px;padding:14px 16px;background:var(--brand-50);border:1px solid var(--brand-100);border-radius:var(--radius-md)">
             <p style="font-family:var(--font-family);font-size:var(--text-xs);font-weight:600;color:var(--brand-700);margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.05em">Credenciales de prueba</p>
             <div style="display:flex;flex-direction:column;gap:4px">
               <p style="font-family:var(--font-family);font-size:var(--text-sm);color:var(--text-secondary);margin:0">
-                <strong style="color:var(--text-primary);font-weight:600">Marta:</strong> marta@ksecrm.mx / marta2026
+                <strong style="color:var(--text-primary);font-weight:600">Marta:</strong> karinnase@gmail.com / marta2026
               </p>
               <p style="font-family:var(--font-family);font-size:var(--text-sm);color:var(--text-secondary);margin:0">
                 <strong style="color:var(--text-primary);font-weight:600">Carlos:</strong> carlos@ksecrm.mx / carlos2026
@@ -223,19 +258,20 @@ class Component extends DCLogic {
     showPassword: false,
     pwdFocused: false,
     loading: false,
+    googleLoading: false,
     error: null,
     success: false,
     loggedUser: null,
   };
 
   CREDS = [
-    { email: 'marta@ksecrm.mx',  password: 'marta2026',  name: 'Marta'  },
-    { email: 'carlos@ksecrm.mx', password: 'carlos2026', name: 'Carlos' },
+    { email: 'karinnase@gmail.com', password: 'marta2026',  name: 'Marta'  },
+    { email: 'carlos@ksecrm.mx',    password: 'carlos2026', name: 'Carlos' },
   ];
 
   doLogin = () => {
-    const { loading } = this.state;
-    if (loading) return;
+    const { loading, googleLoading } = this.state;
+    if (loading || googleLoading) return;
     this.setState({ loading: true, error: null });
     setTimeout(() => {
       this.setState({ loading: false, success: true, loggedUser: { name: 'Marta' } });
@@ -243,8 +279,20 @@ class Component extends DCLogic {
     }, 800);
   };
 
+  // Prototipo: "Continuar con Google". En producción esto redirige al proveedor
+  // (signIn('google')); aquí solo simula el ida-y-vuelta y el acceso de la dueña.
+  doGoogle = () => {
+    const { loading, googleLoading } = this.state;
+    if (loading || googleLoading) return;
+    this.setState({ googleLoading: true, error: null });
+    setTimeout(() => {
+      this.setState({ googleLoading: false, success: true, loggedUser: { name: 'Marta' } });
+      setTimeout(() => { window.location.href = 'Seguimientos.dc.html'; }, 1200);
+    }, 900);
+  };
+
   renderVals() {
-    const { email, password, showPassword, pwdFocused, loading, error, success, loggedUser } = this.state;
+    const { email, password, showPassword, pwdFocused, loading, googleLoading, error, success, loggedUser } = this.state;
     const hasError = Boolean(error);
     const pwdClass = hasError ? 'has-error' : (pwdFocused ? 'focused' : '');
 
@@ -277,6 +325,9 @@ class Component extends DCLogic {
       pwdClass,
       /* Estados */
       loading,
+      googleLoading,
+      notGoogleLoading: !googleLoading,
+      busy: loading || googleLoading,
       error,
       hasError,
       success,
@@ -292,6 +343,7 @@ class Component extends DCLogic {
       onPwdFocus:      () => this.setState({ pwdFocused: true }),
       onPwdBlur:       () => this.setState({ pwdFocused: false }),
       handleFormSubmit: e => { e.preventDefault(); this.doLogin(); },
+      doGoogle:        this.doGoogle,
     };
   }
 }
