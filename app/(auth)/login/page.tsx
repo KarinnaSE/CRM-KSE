@@ -9,9 +9,9 @@ import { Button } from "@/components/ui/Button";
  * Pantalla: Login — puerta de entrada obligatoria del MVP (KAR-7).
  * Diseño de referencia: Design/…/Login.dc.html.
  *
- * Solo inicio de sesión (email + contraseña). El registro está deshabilitado
- * (backend + UI). Credenciales demo (solo dev): marta@ksecrm.mx / marta2026,
- * carlos@ksecrm.mx / carlos2026.
+ * Inicio de sesión con email + contraseña y con Google (KAR-94). El registro
+ * está deshabilitado (backend + UI). Credenciales demo (solo dev):
+ * karinnase@gmail.com / marta2026, carlos@ksecrm.mx / carlos2026.
  */
 export default function LoginPage() {
   return (
@@ -37,9 +37,12 @@ function LoginInner() {
       : null,
   );
 
+  // Cualquier flujo en curso (contraseña o Google) bloquea a los demás.
+  const busy = loading || googleLoading;
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (loading) return;
+    if (busy) return;
     setLoading(true);
     setError(null);
     try {
@@ -56,7 +59,7 @@ function LoginInner() {
   // solo se concede a correos ya provisionados (la política vive en el backend);
   // una cuenta no autorizada regresa sin sesión y el middleware la deja en /login.
   async function onGoogle() {
-    if (loading || googleLoading) return;
+    if (busy) return;
     setGoogleLoading(true);
     setError(null);
     try {
@@ -146,7 +149,7 @@ function LoginInner() {
                   setEmail(e.target.value);
                   setError(null);
                 }}
-                disabled={loading}
+                disabled={busy}
                 placeholder="tu@correo.com"
                 className="h-10 rounded-md border border-border bg-surface px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary focus:border-interactive focus:ring-2 focus:ring-focus-ring disabled:opacity-60"
               />
@@ -170,7 +173,7 @@ function LoginInner() {
                     setPassword(e.target.value);
                     setError(null);
                   }}
-                  disabled={loading}
+                  disabled={busy}
                   placeholder="••••••••"
                   className="h-10 min-w-0 flex-1 bg-transparent px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary disabled:opacity-60"
                 />
@@ -204,7 +207,7 @@ function LoginInner() {
             <Button
               type="submit"
               variant="primary"
-              disabled={loading}
+              disabled={busy}
               className="mt-1 h-12 w-full text-base"
             >
               {loading ? (
@@ -230,7 +233,7 @@ function LoginInner() {
           <button
             type="button"
             onClick={onGoogle}
-            disabled={loading || googleLoading}
+            disabled={busy}
             className="flex h-12 w-full items-center justify-center gap-3 rounded-md border border-border bg-surface text-base font-medium text-text-primary transition-colors hover:bg-surface-2 disabled:opacity-60"
           >
             {googleLoading ? (
