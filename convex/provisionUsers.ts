@@ -6,12 +6,15 @@ import {
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { createAccount } from "@convex-dev/auth/server";
+import type { MutationCtx } from "./_generated/server";
 
-// Correos de la dueña: el viejo (provisión original) y el real (KAR-94). La
-// migración `migrateOwnerEmail` mueve del viejo al nuevo conservando el `_id`;
-// `provisionProdUsers` los usa para NO crear una segunda dueña tras migrar.
-const OWNER_OLD_EMAIL = "marta@ksecrm.mx";
+// Correos con doble estado (viejo de provisión original → real para Google). La
+// migración mueve del viejo al nuevo conservando el `_id`; `provisionProdUsers`
+// usa ambos para NO crear un duplicado tras migrar (idempotencia).
+const OWNER_OLD_EMAIL = "marta@ksecrm.mx"; // dueña (KAR-94)
 const OWNER_NEW_EMAIL = "karinnase@gmail.com";
+const CARLOS_OLD_EMAIL = "carlos@ksecrm.mx"; // vendedor (KAR-95)
+const CARLOS_NEW_EMAIL = "karinnaserrano111@gmail.com";
 
 /**
  * Provisionamiento de las cuentas de PRODUCCIÓN (KAR-7).
@@ -51,9 +54,9 @@ export const provisionProdUsers = internalAction({
     }
 
     // `existsEmails`: correos cuya presencia significa "esta persona ya está
-    // provisionada, no crear". Para la dueña se incluyen el nuevo Y el viejo, de
-    // modo que provisionar tras `migrateOwnerEmail` (o antes) NUNCA crea una
-    // segunda dueña, sea cual sea el orden de ejecución (idempotencia M1).
+    // provisionada, no crear". Se incluye el nuevo Y el viejo, de modo que
+    // provisionar tras la migración (o antes) NUNCA crea un duplicado, sea cual
+    // sea el orden de ejecución (idempotencia).
     const accounts = [
       {
         email: OWNER_NEW_EMAIL,
@@ -63,8 +66,8 @@ export const provisionProdUsers = internalAction({
         secret: martaPwd,
       },
       {
-        email: "carlos@ksecrm.mx",
-        existsEmails: ["carlos@ksecrm.mx"],
+        email: CARLOS_NEW_EMAIL,
+        existsEmails: [CARLOS_NEW_EMAIL, CARLOS_OLD_EMAIL],
         name: "Carlos Rueda",
         role: "vendedor" as const,
         secret: carlosPwd,
@@ -95,78 +98,101 @@ export const provisionProdUsers = internalAction({
 });
 
 /**
- * Migración de PROD: mover el correo de la dueña a `karinnase@gmail.com` (KAR-94)
- * para que pueda entrar con Google, CONSERVANDO el mismo `users._id` (no rompe
- * ninguna referencia `registeredBy`/`assignedTo`/etc.).
- * Ejecutar: `npx convex run provisionUsers:migrateOwnerEmail --prod`
- *
- * Idempotente (localiza a la dueña por el correo nuevo o el viejo) y acotada:
- * aborta si la cuenta encontrada no es `role: "duena"`. Hace dos cosas:
- *   1) `users.email` -> `karinnase@gmail.com` (minúsculas, casa con normalizeEmail).
- *   2) renombra el `authAccounts.providerAccountId` del método Password
- *      `marta@ksecrm.mx` -> `karinnase@gmail.com` (la contraseña/secret NO cambia,
- *      así el login por contraseña sigue funcionando con el correo nuevo).
+ * Helper de migración: mueve el correo de un usuario provisionado a `newEmail`
+ * CONSERVANDO el mismo `users._id` (no rompe referencias `registeredBy`/
+ * `assignedTo`/etc.), para que pueda entrar con Google (que vincula por
+ * `users.email`). Idempotente y acotado:
+ *   - localiza al usuario por el correo nuevo o el viejo;
+ *   - aborta si el rol no coincide con `expectedRole` (guardia de seguridad);
+ *   - parchea `users.email` -> `newEmail`;
+ *   - renombra el `authAccounts.providerAccountId` del método Password
+ *     `oldEmail` -> `newEmail` (la contraseña/secret NO cambia), salvo que ya
+ *     exista una cuenta Password con `newEmail` (evita duplicar `authAccounts`).
  * Reversible corriendo el intercambio inverso a mano si hiciera falta.
+ */
+async function renameUserEmail(
+  ctx: MutationCtx,
+  {
+    oldEmail,
+    newEmail,
+    expectedRole,
+  }: {
+    oldEmail: string;
+    newEmail: string;
+    expectedRole: "duena" | "vendedor";
+  },
+) {
+  const user =
+    (await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", newEmail))
+      .unique()) ??
+    (await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", oldEmail))
+      .unique());
+
+  if (user === null) {
+    throw new Error(`No se encontró el usuario (${oldEmail} ni ${newEmail}).`);
+  }
+  if (user.role !== expectedRole) {
+    throw new Error(
+      `El usuario encontrado no tiene rol "${expectedRole}"; abortando por seguridad.`,
+    );
+  }
+
+  // 1) Correo del documento de usuario (mismo _id).
+  const emailPatched = user.email !== newEmail;
+  if (emailPatched) {
+    await ctx.db.patch(user._id, { email: newEmail });
+  }
+
+  // 2) Cuenta Password: renombrar el providerAccountId (id de login).
+  const newAccount = await ctx.db
+    .query("authAccounts")
+    .withIndex("providerAndAccountId", (q) =>
+      q.eq("provider", "password").eq("providerAccountId", newEmail),
+    )
+    .unique();
+  const oldAccount = await ctx.db
+    .query("authAccounts")
+    .withIndex("providerAndAccountId", (q) =>
+      q.eq("provider", "password").eq("providerAccountId", oldEmail),
+    )
+    .unique();
+  const accountRenamed = newAccount === null && oldAccount !== null;
+  if (accountRenamed && oldAccount !== null) {
+    await ctx.db.patch(oldAccount._id, { providerAccountId: newEmail });
+  }
+
+  return { userId: user._id, email: newEmail, emailPatched, accountRenamed };
+}
+
+/**
+ * Migración de la DUEÑA a `karinnase@gmail.com` (KAR-94).
+ * Ejecutar: `npx convex run provisionUsers:migrateOwnerEmail --prod`
  */
 export const migrateOwnerEmail = internalMutation({
   args: {},
-  handler: async (ctx) => {
-    const owner =
-      (await ctx.db
-        .query("users")
-        .withIndex("email", (q) => q.eq("email", OWNER_NEW_EMAIL))
-        .unique()) ??
-      (await ctx.db
-        .query("users")
-        .withIndex("email", (q) => q.eq("email", OWNER_OLD_EMAIL))
-        .unique());
+  handler: async (ctx) =>
+    renameUserEmail(ctx, {
+      oldEmail: OWNER_OLD_EMAIL,
+      newEmail: OWNER_NEW_EMAIL,
+      expectedRole: "duena",
+    }),
+});
 
-    if (owner === null) {
-      throw new Error(
-        `No se encontró la dueña (${OWNER_OLD_EMAIL} ni ${OWNER_NEW_EMAIL}).`,
-      );
-    }
-    if (owner.role !== "duena") {
-      throw new Error(
-        "La cuenta encontrada no es la dueña; abortando por seguridad.",
-      );
-    }
-
-    // 1) Correo del documento de usuario (mismo _id).
-    const emailPatched = owner.email !== OWNER_NEW_EMAIL;
-    if (emailPatched) {
-      await ctx.db.patch(owner._id, { email: OWNER_NEW_EMAIL });
-    }
-
-    // 2) Cuenta Password: renombrar el providerAccountId (id de login).
-    //    Si ya existe una cuenta Password con el correo NUEVO (p. ej. una corrida
-    //    previa la renombró), no se toca nada: evita duplicar `authAccounts` ante
-    //    ejecuciones parciales/manuales.
-    const newAccount = await ctx.db
-      .query("authAccounts")
-      .withIndex("providerAndAccountId", (q) =>
-        q.eq("provider", "password").eq("providerAccountId", OWNER_NEW_EMAIL),
-      )
-      .unique();
-    const oldAccount = await ctx.db
-      .query("authAccounts")
-      .withIndex("providerAndAccountId", (q) =>
-        q.eq("provider", "password").eq("providerAccountId", OWNER_OLD_EMAIL),
-      )
-      .unique();
-    const accountRenamed = newAccount === null && oldAccount !== null;
-    if (accountRenamed && oldAccount !== null) {
-      await ctx.db.patch(oldAccount._id, {
-        providerAccountId: OWNER_NEW_EMAIL,
-      });
-    }
-
-    return {
-      ownerId: owner._id,
-      email: OWNER_NEW_EMAIL,
-      emailPatched,
-      accountRenamed,
-      note: "migración dueña -> karinnase@gmail.com (mismo _id)",
-    };
+/**
+ * Migración genérica de correo de un usuario provisionado (KAR-95).
+ * Ejecutar (ej. Carlos):
+ *   npx convex run provisionUsers:migrateUserEmail --prod \
+ *     '{"oldEmail":"carlos@ksecrm.mx","newEmail":"karinnaserrano111@gmail.com","expectedRole":"vendedor"}'
+ */
+export const migrateUserEmail = internalMutation({
+  args: {
+    oldEmail: v.string(),
+    newEmail: v.string(),
+    expectedRole: v.union(v.literal("duena"), v.literal("vendedor")),
   },
+  handler: async (ctx, args) => renameUserEmail(ctx, args),
 });

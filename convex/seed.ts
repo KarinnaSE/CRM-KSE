@@ -16,7 +16,7 @@ import { cerrarFollowup } from "./seguimientos";
  *   3) creación de las 2 cuentas Password (Marta/Carlos) con `createAccount`,
  *   4) inserción de clientes + seguimientos demo (internalMutation insertDemoData).
  *
- * Contraseñas demo FIJAS (dev): karinnase@gmail.com/marta2026, carlos@ksecrm.mx/carlos2026.
+ * Contraseñas demo FIJAS (dev): karinnase@gmail.com/marta2026, karinnaserrano111@gmail.com/carlos2026.
  * En prod NO se usa esta función: ver convex/provisionUsers.ts.
  */
 const HOUR = 60 * 60 * 1000;
@@ -208,11 +208,14 @@ export const seedDemo = internalAction({
         role: "duena", active: true,
       },
     });
+    // Carlos: su correo real es `karinnaserrano111@gmail.com` (KAR-95) para poder
+    // entrar también con Google. En minúsculas, casa con el `normalizeEmail` del
+    // callback de Google.
     const carlos = await createAccount(ctx, {
       provider: "password",
-      account: { id: "carlos@ksecrm.mx", secret: "carlos2026" },
+      account: { id: "karinnaserrano111@gmail.com", secret: "carlos2026" },
       profile: {
-        name: "Carlos Rueda", email: "carlos@ksecrm.mx",
+        name: "Carlos Rueda", email: "karinnaserrano111@gmail.com",
         role: "vendedor", active: true,
       },
     });
