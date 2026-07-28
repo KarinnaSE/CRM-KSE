@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/Button";
  *
  * Inicio de sesión con email + contraseña y con Google (KAR-94). El registro
  * está deshabilitado (backend + UI). Credenciales demo (solo dev):
- * karinnase@gmail.com / marta2026, carlos@ksecrm.mx / carlos2026.
+ * karinnase@gmail.com / marta2026, karinnaserrano111@gmail.com / carlos2026.
  */
 export default function LoginPage() {
   return (
@@ -263,7 +263,7 @@ function LoginInner() {
                   <strong className="font-semibold text-text-primary">
                     Carlos:
                   </strong>{" "}
-                  carlos@ksecrm.mx / carlos2026
+                  karinnaserrano111@gmail.com / carlos2026
                 </p>
               </div>
             </div>
