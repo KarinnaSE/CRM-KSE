@@ -61,7 +61,9 @@ async function hashCode(code: string): Promise<string> {
   if (!pepper) {
     throw new Error(
       "Falta PASSWORD_RESET_PEPPER en el entorno del deployment. " +
-        "Fíjalo con `npx convex env set PASSWORD_RESET_PEPPER <valor>`.",
+        // Sin el valor en la línea de comandos: el CLI lo pide por stdin y así
+        // no queda en el historial del shell ni en la lista de procesos.
+        "Fíjalo con `openssl rand -hex 32 | npx convex env set PASSWORD_RESET_PEPPER`.",
     );
   }
   const encoder = new TextEncoder();
