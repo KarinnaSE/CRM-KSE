@@ -9,9 +9,13 @@ import {
  * cualquier ruta protegida es redirigido a /login antes de renderizar. Un
  * usuario con sesión que pida /login se manda a /seguimientos.
  *
- * El enforcement de `active` NO ocurre aquí (el middleware solo valida la
- * sesión/token); las cuentas inactivas se cierran en la capa de datos
- * (requireAuthUser) y en el AppShell (users.me → signOut).
+ * `convexAuth.isAuthenticated()` resuelve por nombre a la query
+ * `auth:isAuthenticated` del proyecto (convex/auth.ts), NO a la de la librería.
+ * Desde KAR-101 esa query aplica el criterio completo vía `currentActiveUser`:
+ * JWT válido + sesión viva en `authSessions` + `active === true`. O sea que aquí
+ * SÍ se corta el paso a sesiones revocadas y a cuentas desactivadas, no solo a
+ * quien no tenga token. La capa de datos (`requireAuthUser`) y el AppShell
+ * (`users.me`) usan ese mismo criterio, así que no pueden discrepar.
  */
 const isSignInPage = createRouteMatcher(["/login"]);
 const isProtectedRoute = createRouteMatcher([

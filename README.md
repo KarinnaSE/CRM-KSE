@@ -85,13 +85,27 @@ Se fijan con `npx convex env set NOMBRE valor` (añade `--prod` para producción
 Para el caso extremo en que alguien deje una cuenta bloqueada a base de intentos fallidos y la recuperación por correo tampoco esté disponible:
 
 ```bash
-npx convex env set BREAK_GLASS_PASSWORD_MARTA '<contraseña nueva>' --prod
+# 1. Fijar la contraseña SIN escribirla en el comando. Al omitir el valor, el
+#    CLI lo pide por stdin: no queda en el historial del shell ni en la lista
+#    de procesos. NO uses `env set NOMBRE 'contraseña'`.
+npx convex env set BREAK_GLASS_PASSWORD_MARTA --prod
+
+# 2. Aplicar el cambio.
 npx convex run provisionUsers:resetUserPassword --prod \
   '{"email":"karinnase@gmail.com","envSuffix":"MARTA"}'
-npx convex env remove BREAK_GLASS_PASSWORD_MARTA --prod   # ← NO SALTARSE ESTE PASO
+
+# 3. Borrar la variable. NO SALTARSE ESTE PASO.
+npx convex env remove BREAK_GLASS_PASSWORD_MARTA --prod
 ```
 
-Cambia la contraseña, cierra las sesiones abiertas de esa persona y limpia su contador de intentos fallidos. La contraseña va por variable de entorno para que no quede en el historial del shell, y **hay que borrarla justo después** o queda una credencial válida en la configuración del deployment.
+Cambia la contraseña, cierra las sesiones abiertas de esa persona y limpia su contador de intentos fallidos.
+
+Dos cosas que hay que respetar:
+
+- **La contraseña nunca va en la línea de comandos.** Ni como argumento de `env set` ni de `convex run`: acabaría en el historial del shell y sería visible en la lista de procesos mientras dura el comando. Por eso el paso 1 omite el valor. Si prefieres no usar la terminal, el panel de Convex (Settings → Environment Variables) también sirve y no toca el shell.
+- **La variable es de un solo uso.** Si no se borra en el paso 3, queda una credencial válida guardada en la configuración del deployment. El sufijo va por cuenta (`_MARTA`, `_CARLOS`) precisamente para que sea evidente cuál hay que borrar.
+
+Después de usarlo, pídele a la persona que cambie la contraseña desde la pantalla de recuperación.
 
 ## Subir a GitHub
 

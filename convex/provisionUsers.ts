@@ -210,16 +210,20 @@ export const migrateUserEmail = internalMutation({
  * está disponible (Resend caído, buzón inaccesible). Cambia la contraseña,
  * tumba las sesiones abiertas y limpia el contador de intentos de ESA cuenta.
  *
- * Ejecutar:
- *   npx convex env set BREAK_GLASS_PASSWORD_MARTA '<contraseña>' --prod
+ * Ejecutar (runbook completo en el README):
+ *   npx convex env set BREAK_GLASS_PASSWORD_MARTA --prod   # SIN el valor: lo pide por stdin
  *   npx convex run provisionUsers:resetUserPassword --prod \
  *     '{"email":"karinnase@gmail.com","envSuffix":"MARTA"}'
  *   npx convex env remove BREAK_GLASS_PASSWORD_MARTA --prod   # ← NO SALTARSE
  *
- * La contraseña llega por variable de entorno y no por argumento para que no
- * quede en el historial del shell. Es de UN SOLO USO: hay que borrarla del
- * deployment justo después, o queda una contraseña válida en la configuración.
- * Por eso el sufijo es explícito y por cuenta: obliga a pensar cuál se borra.
+ * La contraseña llega por variable de entorno y no como argumento de esta
+ * función. OJO: eso por sí solo no basta — hay que fijarla OMITIENDO el valor en
+ * `env set`, o la contraseña acaba igualmente en el historial del shell y en la
+ * lista de procesos, que es justo lo que se quiere evitar.
+ *
+ * Es de UN SOLO USO: hay que borrarla del deployment justo después, o queda una
+ * contraseña válida en la configuración. Por eso el sufijo es explícito y por
+ * cuenta: obliga a pensar cuál se borra.
  */
 export const resetUserPassword = internalAction({
   args: { email: v.string(), envSuffix: v.string() },
