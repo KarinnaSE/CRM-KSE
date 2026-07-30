@@ -141,12 +141,29 @@ export const requestCode = action({
     await sendResetCodeEmail(account.providerAccountId, code);
 
     // 5) Rotar el código ya entregado.
-    await ctx.runMutation(internal.passwordReset.storeCode, {
-      accountId: account._id,
-      codeHash,
-      expiresAt: Date.now() + CODE_TTL_MS,
-      attemptsLeft: MAX_VERIFY_ATTEMPTS,
-    });
+    //
+    // Si esto falla habiendo salido el correo, la usuaria tiene en la mano un
+    // código que nunca funcionará. No se compensa —no hay nada que deshacer: el
+    // correo ya está entregado y el código anterior sigue intacto—, pero sí se
+    // deja una traza inconfundible en los logs, porque desde fuera ese fallo se
+    // ve idéntico a "el código no es válido" y sin esta línea soporte estaría
+    // adivinando. Se relanza para que la action siga contando como fallida.
+    try {
+      await ctx.runMutation(internal.passwordReset.storeCode, {
+        accountId: account._id,
+        codeHash,
+        expiresAt: Date.now() + CODE_TTL_MS,
+        attemptsLeft: MAX_VERIFY_ATTEMPTS,
+      });
+    } catch (e) {
+      console.error(
+        "[passwordReset] El correo con el código SÍ se envió, pero no se pudo " +
+          "guardar el código: la usuaria recibirá uno que no funciona. " +
+          "Debe volver a pedirlo.",
+        e instanceof Error ? e.message : String(e),
+      );
+      throw e;
+    }
     return null;
   },
 });

@@ -141,7 +141,13 @@ function LoginInner() {
       // enumeración porque la acción NUNCA lanza por "el correo no existe" —
       // ese caso devuelve lo mismo que un envío correcto. Aquí solo caben
       // fallos de red, de Resend o del pepper.
-      console.error("Fallo al solicitar el código de recuperación:", e);
+      // Solo el mensaje, no el objeto entero: un error serializado completo
+      // arrastra la traza y lo que haya devuelto el proveedor, y esto acaba en
+      // la consola del navegador de la usuaria.
+      console.error(
+        "Fallo al solicitar el código de recuperación:",
+        e instanceof Error ? e.message : String(e),
+      );
     }
     setResetLoading(false);
     // Cada petición invalida el código anterior, así que se limpia el campo para
