@@ -12,6 +12,11 @@ import { Button } from "@/components/ui/Button";
  * Inicio de sesión con email + contraseña y con Google (KAR-94). El registro
  * está deshabilitado (backend + UI). Credenciales demo (solo dev):
  * karinnase@gmail.com / marta2026, karinnaserrano111@gmail.com / carlos2026.
+ *
+ * Incluye la recuperación de contraseña por código (KAR-96) como pasos DENTRO de
+ * esta misma pantalla (no hay ruta nueva): pedir código → introducir código y
+ * nueva contraseña. Al verificar, Convex Auth deja la sesión iniciada, así que se
+ * entra directo a /seguimientos.
  */
 export default function LoginPage() {
   return (
@@ -21,11 +26,28 @@ export default function LoginPage() {
   );
 }
 
+/** Pasos de la pantalla. "signIn" es el estado por defecto. */
+type Mode = "signIn" | "requestCode" | "enterCode";
+
+const CODE_LENGTH = 6;
+/** Mínimo que exige Convex Auth para la contraseña nueva. */
+const MIN_PASSWORD_LENGTH = 8;
+
+/**
+ * Mismo criterio que el backend (`normalizeEmail` en convex/auth.ts): Convex Auth
+ * compara el correo tal cual contra `providerAccountId`, así que hay que enviarlo
+ * ya normalizado o una mayúscula impediría encontrar la cuenta.
+ */
+function normalizeEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 function LoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { signIn } = useAuthActions();
 
+  const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -37,8 +59,28 @@ function LoginInner() {
       : null,
   );
 
-  // Cualquier flujo en curso (contraseña o Google) bloquea a los demás.
-  const busy = loading || googleLoading;
+  // ── Estado de la recuperación de contraseña (KAR-96) ──
+  const [code, setCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Cualquier flujo en curso (contraseña, Google o recuperación) bloquea a los demás.
+  const busy = loading || googleLoading || resetLoading;
+
+  const codeIsComplete = new RegExp(`^\\d{${CODE_LENGTH}}$`).test(code);
+  const newPasswordIsLongEnough = newPassword.length >= MIN_PASSWORD_LENGTH;
+
+  /** Vuelve al inicio de sesión limpiando el estado de la recuperación. */
+  function backToSignIn() {
+    setMode("signIn");
+    setCode("");
+    setNewPassword("");
+    setShowNewPassword(false);
+    setError(null);
+    setNotice(null);
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -46,7 +88,11 @@ function LoginInner() {
     setLoading(true);
     setError(null);
     try {
-      await signIn("password", { email, password, flow: "signIn" });
+      await signIn("password", {
+        email: normalizeEmail(email),
+        password,
+        flow: "signIn",
+      });
       router.replace("/seguimientos");
     } catch {
       setError("Correo o contraseña incorrectos.");
@@ -67,6 +113,94 @@ function LoginInner() {
     } catch {
       setError("No se pudo iniciar sesión con Google. Inténtalo de nuevo.");
       setGoogleLoading(false);
+    }
+  }
+
+  /**
+   * Paso 1 — pedir el código (flow "reset"): Convex Auth genera el código, lo
+   * guarda con caducidad y lo envía por correo.
+   *
+   * A PROPÓSITO el resultado es indistinguible entre éxito y error: se avanza al
+   * paso del código y se muestra el mismo mensaje aunque el correo no exista o no
+   * tenga contraseña (cuenta solo-Google). Así la pantalla no se convierte en un
+   * oráculo para averiguar qué correos están dados de alta.
+   */
+  async function requestCodeFor(normalized: string, isResend: boolean) {
+    setResetLoading(true);
+    setError(null);
+    try {
+      await signIn("password", { email: normalized, flow: "reset" });
+    } catch {
+      // Silencio deliberado (ver comentario del bloque).
+    }
+    setResetLoading(false);
+    // Cada petición invalida el código anterior, así que se limpia el campo para
+    // que no quede a la vista un código que ya no sirve.
+    setCode("");
+    if (!isResend) setNewPassword("");
+    setMode("enterCode");
+    setNotice(
+      isResend
+        ? `Te hemos enviado un código nuevo. El anterior ya no es válido.`
+        : `Si el correo está dado de alta, te hemos enviado un código de ${CODE_LENGTH} dígitos. Caduca en 15 minutos.`,
+    );
+  }
+
+  async function onRequestCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    const normalized = normalizeEmail(email);
+    if (normalized === "") {
+      setError("Escribe tu correo electrónico.");
+      return;
+    }
+    await requestCodeFor(normalized, false);
+  }
+
+  /** Reenvía el código sin hacer volver al paso anterior. */
+  async function onResendCode() {
+    if (busy) return;
+    const normalized = normalizeEmail(email);
+    if (normalized === "") {
+      setMode("requestCode");
+      return;
+    }
+    await requestCodeFor(normalized, true);
+  }
+
+  /**
+   * Paso 2 — verificar el código y cambiar la contraseña (flow
+   * "reset-verification"). Si el código es válido, Convex Auth cambia la
+   * contraseña, invalida las demás sesiones y devuelve una sesión nueva: por eso
+   * se entra directo sin volver a pedir credenciales.
+   */
+  async function onVerifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    if (!codeIsComplete) {
+      setError(`El código debe tener ${CODE_LENGTH} dígitos.`);
+      return;
+    }
+    if (!newPasswordIsLongEnough) {
+      setError(
+        `La contraseña nueva debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`,
+      );
+      return;
+    }
+    setResetLoading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await signIn("password", {
+        email: normalizeEmail(email),
+        code,
+        newPassword,
+        flow: "reset-verification",
+      });
+      router.replace("/seguimientos");
+    } catch {
+      setError("El código no es válido o ha caducado.");
+      setResetLoading(false);
     }
   }
 
@@ -124,149 +258,351 @@ function LoginInner() {
 
           <div className="mb-7">
             <h1 className="text-2xl font-bold text-text-primary">
-              Iniciar sesión
+              {mode === "signIn"
+                ? "Iniciar sesión"
+                : mode === "requestCode"
+                  ? "Recuperar contraseña"
+                  : "Introduce el código"}
             </h1>
             <p className="mt-1.5 text-base text-text-secondary">
-              Accede a tu cuenta de KSE CRM.
+              {mode === "signIn"
+                ? "Accede a tu cuenta de KSE CRM."
+                : mode === "requestCode"
+                  ? "Te enviaremos un código a tu correo para que puedas elegir una contraseña nueva."
+                  : "Escribe el código que te enviamos y elige tu contraseña nueva."}
             </p>
           </div>
 
-          <form onSubmit={onSubmit} noValidate className="flex flex-col gap-[18px]">
-            {/* Correo */}
-            <div className="flex flex-col gap-1">
-              <label
-                htmlFor="email"
-                className="text-sm font-medium text-text-primary"
+          {/* ─────────── Paso: iniciar sesión ─────────── */}
+          {mode === "signIn" && (
+            <>
+              <form
+                onSubmit={onSubmit}
+                noValidate
+                className="flex flex-col gap-[18px]"
               >
-                Correo electrónico
-              </label>
-              <input
-                id="email"
-                type="email"
-                autoComplete="username"
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  setError(null);
-                }}
-                disabled={busy}
-                placeholder="tu@correo.com"
-                className="h-10 rounded-md border border-border bg-surface px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary focus:border-interactive focus:ring-2 focus:ring-focus-ring disabled:opacity-60"
-              />
-            </div>
+                {/* Correo */}
+                <div className="flex flex-col gap-1">
+                  <label
+                    htmlFor="email"
+                    className="text-sm font-medium text-text-primary"
+                  >
+                    Correo electrónico
+                  </label>
+                  <input
+                    id="email"
+                    type="email"
+                    autoComplete="username"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      setError(null);
+                    }}
+                    disabled={busy}
+                    placeholder="tu@correo.com"
+                    className="h-10 rounded-md border border-border bg-surface px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary focus:border-interactive focus:ring-2 focus:ring-focus-ring disabled:opacity-60"
+                  />
+                </div>
 
-            {/* Contraseña */}
-            <div className="flex flex-col gap-1">
-              <label
-                htmlFor="password"
-                className="text-sm font-medium text-text-primary"
+                {/* Contraseña */}
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <label
+                      htmlFor="password"
+                      className="text-sm font-medium text-text-primary"
+                    >
+                      Contraseña
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError(null);
+                        setNotice(null);
+                        setMode("requestCode");
+                      }}
+                      disabled={busy}
+                      className="text-sm font-medium text-interactive underline-offset-2 hover:underline disabled:opacity-60"
+                    >
+                      ¿Olvidaste tu contraseña?
+                    </button>
+                  </div>
+                  <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface focus-within:border-interactive focus-within:ring-2 focus-within:ring-focus-ring">
+                    <input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"
+                      value={password}
+                      onChange={(e) => {
+                        setPassword(e.target.value);
+                        setError(null);
+                      }}
+                      disabled={busy}
+                      placeholder="••••••••"
+                      className="h-10 min-w-0 flex-1 bg-transparent px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary disabled:opacity-60"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={
+                        showPassword
+                          ? "Ocultar contraseña"
+                          : "Mostrar contraseña"
+                      }
+                      className="flex h-10 w-10 shrink-0 items-center justify-center text-text-tertiary hover:text-text-secondary"
+                    >
+                      {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+                    </button>
+                  </div>
+                </div>
+
+                {error && <ErrorBanner message={error} />}
+
+                {/* Submit */}
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={busy}
+                  className="mt-1 h-12 w-full text-base"
+                >
+                  {loading ? (
+                    <>
+                      <Spinner /> Verificando…
+                    </>
+                  ) : (
+                    "Iniciar sesión"
+                  )}
+                </Button>
+              </form>
+
+              {/* Separador */}
+              <div className="my-5 flex items-center gap-3" aria-hidden>
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-xs font-medium uppercase tracking-wide text-text-tertiary">
+                  o
+                </span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+
+              {/* Continuar con Google (KAR-94) */}
+              <button
+                type="button"
+                onClick={onGoogle}
+                disabled={busy}
+                className="flex h-12 w-full items-center justify-center gap-3 rounded-md border border-border bg-surface text-base font-medium text-text-primary transition-colors hover:bg-surface-2 disabled:opacity-60"
               >
-                Contraseña
-              </label>
-              <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface focus-within:border-interactive focus-within:ring-2 focus-within:ring-focus-ring">
+                {googleLoading ? <Spinner dark /> : <GoogleIcon />}
+                {googleLoading ? "Conectando…" : "Continuar con Google"}
+              </button>
+
+              {/* Pista de credenciales demo (SOLO desarrollo). Se inlinea el chequeo
+                  de NODE_ENV para que la eliminación de código muerto la borre por
+                  completo del bundle de producción (no solo evitar el render). */}
+              {process.env.NODE_ENV !== "production" && (
+                <div className="mt-7 rounded-md border border-brand-100 bg-brand-50 px-4 py-3.5">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-700">
+                    Credenciales de prueba (solo desarrollo)
+                  </p>
+                  <div className="flex flex-col gap-1 text-sm text-text-secondary">
+                    <p>
+                      <strong className="font-semibold text-text-primary">
+                        Marta:
+                      </strong>{" "}
+                      karinnase@gmail.com / marta2026
+                    </p>
+                    <p>
+                      <strong className="font-semibold text-text-primary">
+                        Carlos:
+                      </strong>{" "}
+                      karinnaserrano111@gmail.com / carlos2026
+                    </p>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ─────────── Paso: pedir el código ─────────── */}
+          {mode === "requestCode" && (
+            <form
+              onSubmit={onRequestCode}
+              noValidate
+              className="flex flex-col gap-[18px]"
+            >
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="reset-email"
+                  className="text-sm font-medium text-text-primary"
+                >
+                  Correo electrónico
+                </label>
                 <input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  autoComplete="current-password"
-                  value={password}
+                  id="reset-email"
+                  type="email"
+                  autoComplete="username"
+                  autoFocus
+                  value={email}
                   onChange={(e) => {
-                    setPassword(e.target.value);
+                    setEmail(e.target.value);
                     setError(null);
                   }}
                   disabled={busy}
-                  placeholder="••••••••"
-                  className="h-10 min-w-0 flex-1 bg-transparent px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary disabled:opacity-60"
+                  placeholder="tu@correo.com"
+                  className="h-10 rounded-md border border-border bg-surface px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary focus:border-interactive focus:ring-2 focus:ring-focus-ring disabled:opacity-60"
                 />
+              </div>
+
+              {error && <ErrorBanner message={error} />}
+
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={busy}
+                className="mt-1 h-12 w-full text-base"
+              >
+                {resetLoading ? (
+                  <>
+                    <Spinner /> Enviando…
+                  </>
+                ) : (
+                  "Enviarme el código"
+                )}
+              </Button>
+
+              <button
+                type="button"
+                onClick={backToSignIn}
+                disabled={busy}
+                className="text-sm font-medium text-text-secondary underline-offset-2 hover:underline disabled:opacity-60"
+              >
+                Volver al inicio de sesión
+              </button>
+            </form>
+          )}
+
+          {/* ─────────── Paso: código + contraseña nueva ─────────── */}
+          {mode === "enterCode" && (
+            <form
+              onSubmit={onVerifyCode}
+              noValidate
+              className="flex flex-col gap-[18px]"
+            >
+              {notice && (
+                <div
+                  role="status"
+                  className="rounded-md border border-brand-100 bg-brand-50 px-3.5 py-3"
+                >
+                  <p className="text-sm leading-relaxed text-brand-700">
+                    {notice}
+                  </p>
+                </div>
+              )}
+
+              {/* Código */}
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="code"
+                  className="text-sm font-medium text-text-primary"
+                >
+                  Código de {CODE_LENGTH} dígitos
+                </label>
+                <input
+                  id="code"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  maxLength={CODE_LENGTH}
+                  value={code}
+                  onChange={(e) => {
+                    // Solo dígitos: evita que un pegado con espacios o guiones
+                    // invalide un código correcto.
+                    setCode(
+                      e.target.value.replace(/\D/g, "").slice(0, CODE_LENGTH),
+                    );
+                    setError(null);
+                  }}
+                  disabled={busy}
+                  placeholder="000000"
+                  className="h-10 rounded-md border border-border bg-surface px-3 text-center text-lg tracking-[0.3em] text-text-primary outline-none placeholder:tracking-[0.3em] placeholder:text-text-tertiary focus:border-interactive focus:ring-2 focus:ring-focus-ring disabled:opacity-60"
+                />
+              </div>
+
+              {/* Contraseña nueva */}
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="new-password"
+                  className="text-sm font-medium text-text-primary"
+                >
+                  Contraseña nueva
+                </label>
+                <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface focus-within:border-interactive focus-within:ring-2 focus-within:ring-focus-ring">
+                  <input
+                    id="new-password"
+                    type={showNewPassword ? "text" : "password"}
+                    autoComplete="new-password"
+                    value={newPassword}
+                    onChange={(e) => {
+                      setNewPassword(e.target.value);
+                      setError(null);
+                    }}
+                    disabled={busy}
+                    placeholder="••••••••"
+                    className="h-10 min-w-0 flex-1 bg-transparent px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary disabled:opacity-60"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((v) => !v)}
+                    aria-label={
+                      showNewPassword
+                        ? "Ocultar contraseña"
+                        : "Mostrar contraseña"
+                    }
+                    className="flex h-10 w-10 shrink-0 items-center justify-center text-text-tertiary hover:text-text-secondary"
+                  >
+                    {showNewPassword ? <EyeOffIcon /> : <EyeIcon />}
+                  </button>
+                </div>
+                <p className="text-xs text-text-tertiary">
+                  Mínimo {MIN_PASSWORD_LENGTH} caracteres.
+                </p>
+              </div>
+
+              {error && <ErrorBanner message={error} />}
+
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={busy || !codeIsComplete || !newPasswordIsLongEnough}
+                className="mt-1 h-12 w-full text-base"
+              >
+                {resetLoading ? (
+                  <>
+                    <Spinner /> Guardando…
+                  </>
+                ) : (
+                  "Cambiar contraseña y entrar"
+                )}
+              </Button>
+
+              <div className="flex items-center justify-between gap-3">
                 <button
                   type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  aria-label={
-                    showPassword ? "Ocultar contraseña" : "Mostrar contraseña"
-                  }
-                  className="flex h-10 w-10 shrink-0 items-center justify-center text-text-tertiary hover:text-text-secondary"
+                  onClick={onResendCode}
+                  disabled={busy}
+                  className="text-sm font-medium text-interactive underline-offset-2 hover:underline disabled:opacity-60"
                 >
-                  {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+                  Reenviar código
+                </button>
+                <button
+                  type="button"
+                  onClick={backToSignIn}
+                  disabled={busy}
+                  className="text-sm font-medium text-text-secondary underline-offset-2 hover:underline disabled:opacity-60"
+                >
+                  Volver al inicio de sesión
                 </button>
               </div>
-            </div>
-
-            {/* Banner de error */}
-            {error && (
-              <div
-                role="alert"
-                className="flex items-start gap-2.5 rounded-md border border-error-200 bg-error-50 px-3.5 py-3"
-              >
-                <span className="mt-0.5 shrink-0 text-error-600">
-                  <AlertIcon />
-                </span>
-                <p className="text-sm leading-relaxed text-error-700">{error}</p>
-              </div>
-            )}
-
-            {/* Submit */}
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={busy}
-              className="mt-1 h-12 w-full text-base"
-            >
-              {loading ? (
-                <>
-                  <Spinner /> Verificando…
-                </>
-              ) : (
-                "Iniciar sesión"
-              )}
-            </Button>
-          </form>
-
-          {/* Separador */}
-          <div className="my-5 flex items-center gap-3" aria-hidden>
-            <div className="h-px flex-1 bg-border" />
-            <span className="text-xs font-medium uppercase tracking-wide text-text-tertiary">
-              o
-            </span>
-            <div className="h-px flex-1 bg-border" />
-          </div>
-
-          {/* Continuar con Google (KAR-94) */}
-          <button
-            type="button"
-            onClick={onGoogle}
-            disabled={busy}
-            className="flex h-12 w-full items-center justify-center gap-3 rounded-md border border-border bg-surface text-base font-medium text-text-primary transition-colors hover:bg-surface-2 disabled:opacity-60"
-          >
-            {googleLoading ? (
-              <Spinner dark />
-            ) : (
-              <GoogleIcon />
-            )}
-            {googleLoading ? "Conectando…" : "Continuar con Google"}
-          </button>
-
-          {/* Pista de credenciales demo (SOLO desarrollo). Se inlinea el chequeo
-              de NODE_ENV para que la eliminación de código muerto la borre por
-              completo del bundle de producción (no solo evitar el render). */}
-          {process.env.NODE_ENV !== "production" && (
-            <div className="mt-7 rounded-md border border-brand-100 bg-brand-50 px-4 py-3.5">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-700">
-                Credenciales de prueba (solo desarrollo)
-              </p>
-              <div className="flex flex-col gap-1 text-sm text-text-secondary">
-                <p>
-                  <strong className="font-semibold text-text-primary">
-                    Marta:
-                  </strong>{" "}
-                  karinnase@gmail.com / marta2026
-                </p>
-                <p>
-                  <strong className="font-semibold text-text-primary">
-                    Carlos:
-                  </strong>{" "}
-                  karinnaserrano111@gmail.com / carlos2026
-                </p>
-              </div>
-            </div>
+            </form>
           )}
 
           <p className="mt-7 text-center text-xs text-text-tertiary">
@@ -274,6 +610,23 @@ function LoginInner() {
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ───────────── Piezas de UI ───────────── */
+
+/** Banner de error compartido por los tres pasos. */
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-2.5 rounded-md border border-error-200 bg-error-50 px-3.5 py-3"
+    >
+      <span className="mt-0.5 shrink-0 text-error-600">
+        <AlertIcon />
+      </span>
+      <p className="text-sm leading-relaxed text-error-700">{message}</p>
     </div>
   );
 }
