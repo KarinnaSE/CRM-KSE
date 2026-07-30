@@ -4,22 +4,25 @@ import Google from "@auth/core/providers/google";
 import type { WithoutSystemFields } from "convex/server";
 import type { MutationCtx } from "./_generated/server";
 import type { DataModel, Doc } from "./_generated/dataModel";
-import { ResendOTPPasswordReset } from "./ResendOTPPasswordReset";
+import { normalizeEmail, validatePassword } from "./authShared";
 
 /**
  * Autenticación de KSE CRM — Convex Auth. Dos métodos que CONVIVEN:
- *   1) Password (KAR-7): email + contraseña, con recuperación por código (KAR-96).
+ *   1) Password (KAR-7): email + contraseña.
  *   2) Google OAuth (KAR-94): "Continuar con Google".
+ *
+ * La recuperación de contraseña por código NO vive aquí: es un flujo propio, en
+ * convex/passwordReset.ts (KAR-100). Ver allí el motivo.
  *
  * REGISTRO CERRADO POR DISEÑO (backend, no solo UI). NADIE se crea cuenta solo:
  * las cuentas se provisionan internamente (convex/seed.ts dev, convex/provisionUsers.ts
  * prod) vía `createAccount`. Ni sign-up de Password ni Google pueden crear un
  * usuario nuevo sin rol.
  *
- * - Password: `PasswordWithReset` limita los `flow` admitidos a iniciar sesión y
- *   recuperar contraseña (ver `ALLOWED_FLOWS`), de modo que el sign-up sigue
- *   cerrado por red. Se usa el proveedor Password estándar para conservar
- *   Scrypt, `retrieveAccount` y el rate limit del sign-in.
+ * - Password: `PasswordSignInOnly` limita los `flow` admitidos a iniciar sesión
+ *   (ver `ALLOWED_FLOWS`), de modo que el sign-up sigue cerrado por red. Se usa
+ *   el proveedor Password estándar para conservar Scrypt, `retrieveAccount` y el
+ *   rate limit del sign-in.
  * - Google: el proveedor entra por el flujo OIDC estándar, pero la POLÍTICA de
  *   acceso vive en `callbacks.createOrUpdateUser` (ver abajo): solo se admite un
  *   correo verificado que YA corresponda a un usuario provisionado; en cualquier
@@ -32,18 +35,19 @@ import { ResendOTPPasswordReset } from "./ResendOTPPasswordReset";
  */
 
 /**
- * Flujos de Password admitidos por red. `signUp` (y `email-verification`) quedan
- * FUERA a propósito: el registro está cerrado.
+ * Flujos de Password admitidos por red. TODO lo demás queda fuera:
  *
- * `reset` y `reset-verification` son la recuperación de contraseña (KAR-96). No
- * abren el registro: `reset` exige que la cuenta Password ya exista, así que un
- * correo no provisionado no puede crear nada.
+ * - `signUp` y `email-verification`: el registro está cerrado.
+ * - `reset` y `reset-verification`: la recuperación la sirve convex/passwordReset.ts.
+ *   Cerrarlos aquí NO es cosmético — es lo que impide que alguien llame a
+ *   `auth:signIn` directamente con `flow: "reset"` y se salte la cuota, que es
+ *   justamente el agujero que arregla KAR-100.
  */
-const ALLOWED_FLOWS = new Set(["signIn", "reset", "reset-verification"]);
+const ALLOWED_FLOWS = new Set(["signIn"]);
 
-const PasswordWithReset = Password<DataModel>({
-  // Envío del código de recuperación (OTP por correo, vía Resend).
-  reset: ResendOTPPasswordReset,
+const PasswordSignInOnly = Password<DataModel>({
+  // Política de contraseñas compartida con la UI y con el flujo de recuperación.
+  validatePasswordRequirements: validatePassword,
   /**
    * OJO: `profile()` se ejecuta en TODOS los flows, antes de que el proveedor
    * ramifique por `flow`. Es el punto correcto para cerrar el registro y para
@@ -53,8 +57,7 @@ const PasswordWithReset = Password<DataModel>({
     const flow = params.flow;
     if (typeof flow !== "string" || !ALLOWED_FLOWS.has(flow)) {
       throw new Error(
-        "El registro está deshabilitado. Solo se permite iniciar sesión o " +
-          "recuperar la contraseña.",
+        "El registro está deshabilitado. Solo se permite iniciar sesión.",
       );
     }
     // Convex Auth NO normaliza `providerAccountId`: compara la cadena tal cual.
@@ -84,13 +87,8 @@ const GoogleProvider = Google({
   },
 });
 
-// Normaliza un correo para comparar de forma consistente (trim + minúsculas).
-function normalizeEmail(email: unknown): string {
-  return typeof email === "string" ? email.trim().toLowerCase() : "";
-}
-
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
-  providers: [PasswordWithReset, GoogleProvider],
+  providers: [PasswordSignInOnly, GoogleProvider],
   callbacks: {
     /**
      * Punto único de la política de acceso. Se ejecuta tanto en la provisión
@@ -126,15 +124,14 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
         return user._id;
       }
 
-      // ── Password ── Sign-in, recuperación de contraseña y provisión interna.
-      //    Si la cuenta ya existe (sign-in, o verificación del código de reset
-      //    sobre una cuenta existente) → se devuelve su usuario, sin tocar nada.
+      // ── Password ── Sign-in y provisión interna. Si la cuenta ya existe
+      //    (sign-in) → se devuelve su usuario, sin tocar nada.
       if (args.existingUserId !== null) return args.existingUserId;
 
       // Llegar aquí significa "crear un usuario nuevo", y eso SOLO es legítimo
       // en la provisión interna por credenciales (`createAccount` de seed.ts /
-      // provisionUsers.ts). En la verificación de un código de correo Convex Auth
-      // invoca este callback con `type: "verification"`; crear un usuario ahí
+      // provisionUsers.ts). Ante cualquier otro `type` —p. ej. la verificación
+      // de un código de correo, que llega como `verification`— crear un usuario
       // abriría el registro por la puerta de atrás. FAIL-CLOSED.
       if (args.type !== "credentials") {
         throw new Error("Cuenta no autorizada.");

@@ -8,13 +8,15 @@
  * @module
  */
 
-import type * as ResendOTPPasswordReset from "../ResendOTPPasswordReset.js";
 import type * as auth from "../auth.js";
+import type * as authShared from "../authShared.js";
 import type * as authz from "../authz.js";
 import type * as clients from "../clients.js";
 import type * as dates from "../dates.js";
 import type * as http from "../http.js";
 import type * as interactions from "../interactions.js";
+import type * as passwordReset from "../passwordReset.js";
+import type * as passwordResetEmail from "../passwordResetEmail.js";
 import type * as provisionUsers from "../provisionUsers.js";
 import type * as sales from "../sales.js";
 import type * as seed from "../seed.js";
@@ -28,13 +30,15 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  ResendOTPPasswordReset: typeof ResendOTPPasswordReset;
   auth: typeof auth;
+  authShared: typeof authShared;
   authz: typeof authz;
   clients: typeof clients;
   dates: typeof dates;
   http: typeof http;
   interactions: typeof interactions;
+  passwordReset: typeof passwordReset;
+  passwordResetEmail: typeof passwordResetEmail;
   provisionUsers: typeof provisionUsers;
   sales: typeof sales;
   seed: typeof seed;
