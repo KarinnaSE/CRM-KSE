@@ -60,6 +60,39 @@ convex/                 Backend: schema y funciones (seguimientos, seed, dates)
 
 Copia `.env.example` a `.env.local`. `npx convex dev` rellena `CONVEX_DEPLOYMENT` y `NEXT_PUBLIC_CONVEX_URL` automáticamente. Nunca subas `.env.local` a GitHub.
 
+### Variables del deployment de Convex (no van en `.env.local`)
+
+Se fijan con `npx convex env set NOMBRE valor` (añade `--prod` para producción) y hay que tenerlas **en dev y en prod**:
+
+| Variable | Para qué |
+|---|---|
+| `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | Login con Google |
+| `RESEND_API_KEY` | Envío del código de recuperación |
+| `PASSWORD_RESET_PEPPER` | Clave del HMAC con el que se guardan los códigos |
+| `SITE_URL` | Destino válido de los redirects de OAuth |
+| `ALLOW_DEMO_SEED` | **Solo dev.** Habilita `seed:seedDemo` y `seed:clearAll`, y hace que el código de recuperación se escriba en el log |
+
+`PASSWORD_RESET_PEPPER` se genera con `openssl rand -hex 32` y debe ser **distinta en dev y en prod**. Sin ella la recuperación de contraseña falla (a propósito: es fail-closed). Rotarla solo invalida los códigos en vuelo, que caducan en 15 minutos de todas formas.
+
+## Operación y seguridad
+
+**No pongas `AUTH_LOG_LEVEL=DEBUG` en producción.** Convex Auth registra los argumentos de sus funciones internas con ese nivel, y ahí van códigos de verificación en claro y perfiles completos de OAuth. Por defecto es `INFO`, así que basta con no tocarlo.
+
+**`ALLOW_DEMO_SEED` nunca en producción.** Habilita `seed:clearAll`, que borra `users`, `authAccounts` y `authSessions`.
+
+### Break-glass: recuperar el acceso de una cuenta bloqueada
+
+Para el caso extremo en que alguien deje una cuenta bloqueada a base de intentos fallidos y la recuperación por correo tampoco esté disponible:
+
+```bash
+npx convex env set BREAK_GLASS_PASSWORD_MARTA '<contraseña nueva>' --prod
+npx convex run provisionUsers:resetUserPassword --prod \
+  '{"email":"karinnase@gmail.com","envSuffix":"MARTA"}'
+npx convex env remove BREAK_GLASS_PASSWORD_MARTA --prod   # ← NO SALTARSE ESTE PASO
+```
+
+Cambia la contraseña, cierra las sesiones abiertas de esa persona y limpia su contador de intentos fallidos. La contraseña va por variable de entorno para que no quede en el historial del shell, y **hay que borrarla justo después** o queda una credencial válida en la configuración del deployment.
+
 ## Subir a GitHub
 
 ```bash

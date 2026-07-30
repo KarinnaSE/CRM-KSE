@@ -1,5 +1,5 @@
 import { query } from "./_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { currentActiveUser } from "./authz";
 
 /**
  * Entidad Usuario. La gestión completa (alta/edición, activar/desactivar,
@@ -8,18 +8,15 @@ import { getAuthUserId } from "@convex-dev/auth/server";
  */
 
 /**
- * Usuario de la sesión actual, o `null`. FAIL-CLOSED para cuentas sin acceso:
- * si no hay sesión, o el usuario no existe, o `active !== true`, devuelve `null`
- * (nunca expone otros usuarios ni un usuario inactivo). Es la única función de
- * `users` sin `requireAuthUser`: `null` es la respuesta legítima para anónimo.
+ * Usuario de la sesión actual, o `null`. Es la única función de `users` sin
+ * `requireAuthUser`: `null` es la respuesta legítima para anónimo, no un error.
+ *
+ * Comparte criterio con `requireAuthUser` y con el `isAuthenticated` de
+ * `auth.ts` a través de `currentActiveUser`, así que la UI nunca puede creerse
+ * dentro cuando la capa de datos ya la ha echado. Fail-closed: sin sesión,
+ * sesión revocada o caducada, usuario inexistente o `active !== true` → `null`.
  */
 export const me = query({
   args: {},
-  handler: async (ctx) => {
-    const id = await getAuthUserId(ctx);
-    if (!id) return null;
-    const user = await ctx.db.get(id);
-    if (!user || user.active !== true) return null;
-    return user;
-  },
+  handler: async (ctx) => await currentActiveUser(ctx),
 });

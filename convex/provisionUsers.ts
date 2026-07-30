@@ -5,8 +5,13 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
-import { createAccount } from "@convex-dev/auth/server";
+import {
+  createAccount,
+  invalidateSessions,
+  modifyAccountCredentials,
+} from "@convex-dev/auth/server";
 import type { MutationCtx } from "./_generated/server";
+import { normalizeEmail, validatePassword } from "./authShared";
 
 // Correos con doble estado (viejo de provisión original → real para Google). La
 // migración mueve del viejo al nuevo conservando el `_id`; `provisionProdUsers`
@@ -195,4 +200,70 @@ export const migrateUserEmail = internalMutation({
     expectedRole: v.union(v.literal("duena"), v.literal("vendedor")),
   },
   handler: async (ctx, args) => renameUserEmail(ctx, args),
+});
+
+/**
+ * BREAK-GLASS: devolver el acceso a una cuenta bloqueada (KAR-101).
+ *
+ * Para el caso extremo que motivó el hallazgo A2: alguien deja las cuentas
+ * bloqueadas a base de intentos fallidos y la recuperación por correo tampoco
+ * está disponible (Resend caído, buzón inaccesible). Cambia la contraseña,
+ * tumba las sesiones abiertas y limpia el contador de intentos de ESA cuenta.
+ *
+ * Ejecutar:
+ *   npx convex env set BREAK_GLASS_PASSWORD_MARTA '<contraseña>' --prod
+ *   npx convex run provisionUsers:resetUserPassword --prod \
+ *     '{"email":"karinnase@gmail.com","envSuffix":"MARTA"}'
+ *   npx convex env remove BREAK_GLASS_PASSWORD_MARTA --prod   # ← NO SALTARSE
+ *
+ * La contraseña llega por variable de entorno y no por argumento para que no
+ * quede en el historial del shell. Es de UN SOLO USO: hay que borrarla del
+ * deployment justo después, o queda una contraseña válida en la configuración.
+ * Por eso el sufijo es explícito y por cuenta: obliga a pensar cuál se borra.
+ */
+export const resetUserPassword = internalAction({
+  args: { email: v.string(), envSuffix: v.string() },
+  handler: async (ctx, args) => {
+    // El sufijo se acota para que no pueda construirse el nombre de otra
+    // variable del deployment (p. ej. la clave de Resend o el pepper).
+    if (!/^[A-Z0-9_]{1,32}$/.test(args.envSuffix)) {
+      throw new Error(
+        "envSuffix inválido: solo mayúsculas, dígitos y guion bajo (máx. 32).",
+      );
+    }
+    const varName = `BREAK_GLASS_PASSWORD_${args.envSuffix}`;
+    const secret = process.env[varName];
+    if (!secret) {
+      throw new Error(
+        `Falta ${varName} en el entorno del deployment. Fíjala, ejecuta esto y ` +
+          `bórrala inmediatamente después.`,
+      );
+    }
+    // Misma política que el resto del sistema: nada de colar una contraseña
+    // débil por la puerta de emergencia.
+    validatePassword(secret);
+
+    const email = normalizeEmail(args.email);
+    const account = await ctx.runQuery(internal.passwordReset.accountByEmail, {
+      email,
+    });
+    if (account === null) {
+      throw new Error(`No existe una cuenta Password para ${email}.`);
+    }
+
+    await modifyAccountCredentials(ctx, {
+      provider: "password",
+      account: { id: account.providerAccountId, secret },
+    });
+    await invalidateSessions(ctx, { userId: account.userId });
+    // Solo la fila de ESTA cuenta; nunca un barrido de authRateLimits.
+    await ctx.runMutation(internal.passwordReset.clearSignInLockout, {
+      accountId: account._id,
+    });
+
+    return {
+      email,
+      note: `Contraseña cambiada y bloqueo limpiado. BORRA YA ${varName} del deployment.`,
+    };
+  },
 });

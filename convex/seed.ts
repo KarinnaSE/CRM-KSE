@@ -27,6 +27,15 @@ const DAY = 24 * HOUR;
 export const clearAll = internalMutation({
   args: {},
   handler: async (ctx) => {
+    // Guardia propia (KAR-101, hallazgo B5). `seedDemo` ya la tiene, pero esta
+    // mutation borra `users`, `authAccounts` y `authSessions` y se puede invocar
+    // suelta con `npx convex run seed:clearAll --prod`. Es internal, así que no
+    // hay riesgo desde el cliente; esto protege del despiste con `--prod`.
+    if (!process.env.ALLOW_DEMO_SEED) {
+      throw new Error(
+        "clearAll deshabilitado: falta la variable ALLOW_DEMO_SEED (solo dev).",
+      );
+    }
     for (const table of [
       "followups",
       "interactions",
