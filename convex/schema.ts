@@ -50,6 +50,31 @@ export default defineSchema({
     .index("email", ["email"])
     .index("phone", ["phone"]),
 
+  // ── Recuperación de contraseña (KAR-100) ──
+  // Almacenamiento PROPIO del código, en vez de `authVerificationCodes` de
+  // Convex Auth. Motivo: la librería rota el código ANTES de darnos cualquier
+  // punto donde comprobar una cuota, así que un anónimo podía invalidar sin
+  // límite el código que la usuaria legítima acababa de recibir.
+
+  // Código vigente de una cuenta. Como mucho uno: `storeCode` borra los previos.
+  passwordResetCodes: defineTable({
+    accountId: v.id("authAccounts"),
+    // HMAC-SHA256(código, PASSWORD_RESET_PEPPER). No se guarda el código en
+    // claro, y el pepper evita que 10^6 hashes se precomputen en una tabla.
+    codeHash: v.string(),
+    expiresAt: v.number(), // epoch ms
+    attemptsLeft: v.number(),
+  }).index("by_account", ["accountId"]),
+
+  // Cuota de solicitudes por correo, en ventana fija. Solo se escribe fila para
+  // correos que SÍ tienen cuenta, así que la tabla queda acotada al número de
+  // usuarios reales y un atacante con correos aleatorios no puede inflarla.
+  passwordResetRequests: defineTable({
+    email: v.string(), // normalizado
+    windowStart: v.number(), // epoch ms
+    count: v.number(),
+  }).index("by_email", ["email"]),
+
   // ── Cliente ── dato central del CRM.
   clients: defineTable({
     name: v.string(),

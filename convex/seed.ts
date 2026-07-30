@@ -16,7 +16,7 @@ import { cerrarFollowup } from "./seguimientos";
  *   3) creación de las 2 cuentas Password (Marta/Carlos) con `createAccount`,
  *   4) inserción de clientes + seguimientos demo (internalMutation insertDemoData).
  *
- * Contraseñas demo FIJAS (dev): karinnase@gmail.com/marta2026, karinnaserrano111@gmail.com/carlos2026.
+ * Contraseñas demo FIJAS (dev): karinnase@gmail.com/Marta2026, karinnaserrano111@gmail.com/Carlos2026.
  * En prod NO se usa esta función: ver convex/provisionUsers.ts.
  */
 const HOUR = 60 * 60 * 1000;
@@ -32,6 +32,10 @@ export const clearAll = internalMutation({
       "interactions",
       "sales",
       "clients",
+      // Recuperación de contraseña (KAR-100): van ANTES de authAccounts, de las
+      // que dependen por `accountId`.
+      "passwordResetCodes",
+      "passwordResetRequests",
       "authRateLimits",
       "authVerifiers",
       "authVerificationCodes",
@@ -202,7 +206,7 @@ export const seedDemo = internalAction({
     // minúsculas para casar con el `normalizeEmail` del callback de Google.
     const marta = await createAccount(ctx, {
       provider: "password",
-      account: { id: "karinnase@gmail.com", secret: "marta2026" },
+      account: { id: "karinnase@gmail.com", secret: "Marta2026" },
       profile: {
         name: "Marta López", email: "karinnase@gmail.com",
         role: "duena", active: true,
@@ -213,7 +217,7 @@ export const seedDemo = internalAction({
     // callback de Google.
     const carlos = await createAccount(ctx, {
       provider: "password",
-      account: { id: "karinnaserrano111@gmail.com", secret: "carlos2026" },
+      account: { id: "karinnaserrano111@gmail.com", secret: "Carlos2026" },
       profile: {
         name: "Carlos Rueda", email: "karinnaserrano111@gmail.com",
         role: "vendedor", active: true,

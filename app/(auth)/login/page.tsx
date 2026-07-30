@@ -3,6 +3,13 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthActions } from "@convex-dev/auth/react";
+import { useAction } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import {
+  PASSWORD_RULE_TEXT,
+  normalizeEmail,
+  passwordProblem,
+} from "@/convex/authShared";
 import { Button } from "@/components/ui/Button";
 
 /**
@@ -11,12 +18,14 @@ import { Button } from "@/components/ui/Button";
  *
  * Inicio de sesión con email + contraseña y con Google (KAR-94). El registro
  * está deshabilitado (backend + UI). Credenciales demo (solo dev):
- * karinnase@gmail.com / marta2026, karinnaserrano111@gmail.com / carlos2026.
+ * karinnase@gmail.com / Marta2026, karinnaserrano111@gmail.com / Carlos2026.
  *
- * Incluye la recuperación de contraseña por código (KAR-96) como pasos DENTRO de
- * esta misma pantalla (no hay ruta nueva): pedir código → introducir código y
- * nueva contraseña. Al verificar, Convex Auth deja la sesión iniciada, así que se
- * entra directo a /seguimientos.
+ * Incluye la recuperación de contraseña por código (KAR-96, rehecha en KAR-100)
+ * como pasos DENTRO de esta misma pantalla (no hay ruta nueva): pedir código →
+ * introducir código y nueva contraseña. Ya no se usa el flujo de reset de Convex
+ * Auth, sino `api.passwordReset` (ver el motivo en convex/passwordReset.ts); como
+ * ese flujo no deja sesión iniciada, al terminar se inicia sesión aquí con la
+ * contraseña recién puesta y se entra a /seguimientos igual que antes.
  */
 export default function LoginPage() {
   return (
@@ -30,22 +39,13 @@ export default function LoginPage() {
 type Mode = "signIn" | "requestCode" | "enterCode";
 
 const CODE_LENGTH = 6;
-/** Mínimo que exige Convex Auth para la contraseña nueva. */
-const MIN_PASSWORD_LENGTH = 8;
-
-/**
- * Mismo criterio que el backend (`normalizeEmail` en convex/auth.ts): Convex Auth
- * compara el correo tal cual contra `providerAccountId`, así que hay que enviarlo
- * ya normalizado o una mayúscula impediría encontrar la cuenta.
- */
-function normalizeEmail(value: string): string {
-  return value.trim().toLowerCase();
-}
 
 function LoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { signIn } = useAuthActions();
+  const requestCode = useAction(api.passwordReset.requestCode);
+  const resetPassword = useAction(api.passwordReset.resetPassword);
 
   const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
@@ -70,7 +70,9 @@ function LoginInner() {
   const busy = loading || googleLoading || resetLoading;
 
   const codeIsComplete = new RegExp(`^\\d{${CODE_LENGTH}}$`).test(code);
-  const newPasswordIsLongEnough = newPassword.length >= MIN_PASSWORD_LENGTH;
+  // Misma política que el backend, importada de convex/authShared.ts para que no
+  // puedan desviarse la una de la otra.
+  const newPasswordProblem = passwordProblem(newPassword);
 
   /** Vuelve al inicio de sesión limpiando el estado de la recuperación. */
   function backToSignIn() {
@@ -117,21 +119,24 @@ function LoginInner() {
   }
 
   /**
-   * Paso 1 — pedir el código (flow "reset"): Convex Auth genera el código, lo
-   * guarda con caducidad y lo envía por correo.
+   * Paso 1 — pedir el código: `passwordReset.requestCode` genera el código, lo
+   * guarda con caducidad y lo envía por correo, con cuota por correo.
    *
-   * A PROPÓSITO el resultado es indistinguible entre éxito y error: se avanza al
-   * paso del código y se muestra el mismo mensaje aunque el correo no exista o no
-   * tenga contraseña (cuenta solo-Google). Así la pantalla no se convierte en un
-   * oráculo para averiguar qué correos están dados de alta.
+   * A PROPÓSITO el resultado es indistinguible: se avanza al paso del código y se
+   * muestra el mismo mensaje aunque el correo no exista, no tenga contraseña
+   * (cuenta solo-Google) o se haya agotado la cuota. Así la pantalla no se
+   * convierte en un oráculo para averiguar qué correos están dados de alta. El
+   * backend refuerza lo mismo: devuelve siempre lo mismo y no escribe nada para
+   * un correo desconocido.
    */
   async function requestCodeFor(normalized: string, isResend: boolean) {
     setResetLoading(true);
     setError(null);
     try {
-      await signIn("password", { email: normalized, flow: "reset" });
+      await requestCode({ email: normalized });
     } catch {
-      // Silencio deliberado (ver comentario del bloque).
+      // Silencio deliberado (ver comentario del bloque): aquí solo caben fallos
+      // de red o de Resend, y distinguirlos rompería la uniformidad.
     }
     setResetLoading(false);
     // Cada petición invalida el código anterior, así que se limpia el campo para
@@ -169,10 +174,13 @@ function LoginInner() {
   }
 
   /**
-   * Paso 2 — verificar el código y cambiar la contraseña (flow
-   * "reset-verification"). Si el código es válido, Convex Auth cambia la
-   * contraseña, invalida las demás sesiones y devuelve una sesión nueva: por eso
-   * se entra directo sin volver a pedir credenciales.
+   * Paso 2 — verificar el código y cambiar la contraseña.
+   *
+   * `resetPassword` cambia la contraseña e invalida TODAS las sesiones, pero no
+   * deja ninguna abierta. Por eso a continuación se inicia sesión con la
+   * contraseña recién puesta: se entra directo, igual que antes, sin tener que
+   * replicar aquí el manejo de tokens y cookies que el proxy de Next ya hace
+   * para `auth:signIn`.
    */
   async function onVerifyCode(e: React.FormEvent) {
     e.preventDefault();
@@ -181,26 +189,39 @@ function LoginInner() {
       setError(`El código debe tener ${CODE_LENGTH} dígitos.`);
       return;
     }
-    if (!newPasswordIsLongEnough) {
-      setError(
-        `La contraseña nueva debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`,
-      );
+    if (newPasswordProblem !== null) {
+      setError(newPasswordProblem);
       return;
     }
+    const normalized = normalizeEmail(email);
     setResetLoading(true);
     setError(null);
     setNotice(null);
     try {
-      await signIn("password", {
-        email: normalizeEmail(email),
-        code,
-        newPassword,
-        flow: "reset-verification",
-      });
-      router.replace("/seguimientos");
+      await resetPassword({ email: normalized, code, newPassword });
     } catch {
       setError("El código no es válido o ha caducado.");
       setResetLoading(false);
+      return;
+    }
+    // La contraseña YA está cambiada. Si el inicio de sesión automático fallara
+    // (un corte de red justo aquí), no se puede decir que el código sea inválido:
+    // se manda a iniciar sesión a mano con la contraseña nueva.
+    try {
+      await signIn("password", {
+        email: normalized,
+        password: newPassword,
+        flow: "signIn",
+      });
+      router.replace("/seguimientos");
+    } catch {
+      setResetLoading(false);
+      // `backToSignIn` limpia el error, así que va ANTES de fijarlo.
+      backToSignIn();
+      setError(
+        "Tu contraseña se cambió correctamente, pero no pudimos iniciar tu " +
+          "sesión. Inicia sesión con tu contraseña nueva.",
+      );
     }
   }
 
@@ -407,13 +428,13 @@ function LoginInner() {
                       <strong className="font-semibold text-text-primary">
                         Marta:
                       </strong>{" "}
-                      karinnase@gmail.com / marta2026
+                      karinnase@gmail.com / Marta2026
                     </p>
                     <p>
                       <strong className="font-semibold text-text-primary">
                         Carlos:
                       </strong>{" "}
-                      karinnaserrano111@gmail.com / carlos2026
+                      karinnaserrano111@gmail.com / Carlos2026
                     </p>
                   </div>
                 </div>
@@ -563,7 +584,7 @@ function LoginInner() {
                   </button>
                 </div>
                 <p className="text-xs text-text-tertiary">
-                  Mínimo {MIN_PASSWORD_LENGTH} caracteres.
+                  {PASSWORD_RULE_TEXT}
                 </p>
               </div>
 
@@ -572,7 +593,9 @@ function LoginInner() {
               <Button
                 type="submit"
                 variant="primary"
-                disabled={busy || !codeIsComplete || !newPasswordIsLongEnough}
+                disabled={
+                  busy || !codeIsComplete || newPasswordProblem !== null
+                }
                 className="mt-1 h-12 w-full text-base"
               >
                 {resetLoading ? (
