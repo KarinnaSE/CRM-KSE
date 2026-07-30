@@ -128,6 +128,12 @@ function LoginInner() {
    * convierte en un oráculo para averiguar qué correos están dados de alta. El
    * backend refuerza lo mismo: devuelve siempre lo mismo y no escribe nada para
    * un correo desconocido.
+   *
+   * Y ese mensaje se AFIRMA, sin condicionales (KAR-105): "te hemos enviado un
+   * código", no "si el correo está dado de alta, te hemos enviado un código".
+   * Un condicional no filtra nada por sí mismo —sigue siendo el mismo texto en
+   * todos los casos—, pero le cuenta a quien lo lea que estar dado de alta es un
+   * requisito, que es justo lo que este flujo procura no airear.
    */
   async function requestCodeFor(normalized: string, isResend: boolean) {
     setResetLoading(true);
@@ -158,7 +164,7 @@ function LoginInner() {
     setNotice(
       isResend
         ? `Te hemos enviado un código nuevo. El anterior ya no es válido.`
-        : `Si el correo está dado de alta, te hemos enviado un código de ${CODE_LENGTH} dígitos. Caduca en 15 minutos.`,
+        : `Te hemos enviado un código de ${CODE_LENGTH} dígitos a tu correo. Caduca en 15 minutos.`,
     );
   }
 
