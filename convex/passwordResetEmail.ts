@@ -108,7 +108,10 @@ export async function sendResetCodeEmail(
   // Fail-closed: si Resend no acepta el envío, el flujo debe fallar en vez de
   // dejar al usuario esperando un correo que nunca llegará.
   if (!response.ok) {
-    const detalle = await response.text().catch(() => "");
+    // Se recorta el cuerpo de la respuesta: hace falta algo para diagnosticar,
+    // pero volcar entero lo que devuelva un tercero puede acabar metiendo datos
+    // de la destinataria en los logs.
+    const detalle = (await response.text().catch(() => "")).slice(0, 200);
     throw new Error(
       `Resend rechazó el envío del código (HTTP ${response.status}). ${detalle}`,
     );

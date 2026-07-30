@@ -134,9 +134,14 @@ function LoginInner() {
     setError(null);
     try {
       await requestCode({ email: normalized });
-    } catch {
-      // Silencio deliberado (ver comentario del bloque): aquí solo caben fallos
-      // de red o de Resend, y distinguirlos rompería la uniformidad.
+    } catch (e) {
+      // La PANTALLA calla a propósito (ver el comentario del bloque), pero el
+      // error sí se registra: si no, una mala configuración del correo es
+      // invisible y el soporte se vuelve adivinación. No abre un oráculo de
+      // enumeración porque la acción NUNCA lanza por "el correo no existe" —
+      // ese caso devuelve lo mismo que un envío correcto. Aquí solo caben
+      // fallos de red, de Resend o del pepper.
+      console.error("Fallo al solicitar el código de recuperación:", e);
     }
     setResetLoading(false);
     // Cada petición invalida el código anterior, así que se limpia el campo para

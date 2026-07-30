@@ -102,8 +102,17 @@ function equalsConstantTime(a: string, b: string): boolean {
  * alta no escribe NADA (ni código, ni fila de cuota), así que tampoco deja rastro
  * observable.
  *
- * El orden importa y es el arreglo del hallazgo: cuota (paso 3) ANTES de rotar el
- * código (paso 4).
+ * El orden importa y es el arreglo del hallazgo: la cuota (paso 3) va ANTES de
+ * rotar el código (paso 5).
+ *
+ * OJO al paso 4, que va antes del 5 a propósito: se ENVÍA y solo después se
+ * ROTA. Esta acción no es transaccional —las mutations que lanza ya están
+ * commiteadas cuando el envío falla—, así que rotar primero significaba que una
+ * caída de Resend destruía el código anterior, todavía usable, sin entregar
+ * ninguno nuevo. Enviando primero, un fallo de envío deja intacto el código que
+ * la usuaria ya tenía. El caso inverso (envía y luego falla `storeCode`) es
+ * mucho menos probable —una mutation interna frente a una llamada HTTP externa—
+ * y además es benigno: el código anterior sigue sirviendo.
  */
 export const requestCode = action({
   args: { email: v.string() },
@@ -125,17 +134,19 @@ export const requestCode = action({
     );
     if (!permitido) return null;
 
-    // 4) Rotar el código.
+    // 4) Enviar, a la dirección ALMACENADA en la cuenta. Si esto lanza, no se ha
+    //    invalidado nada: el código anterior sigue vivo.
     const code = generateNumericCode();
+    const codeHash = await hashCode(code);
+    await sendResetCodeEmail(account.providerAccountId, code);
+
+    // 5) Rotar el código ya entregado.
     await ctx.runMutation(internal.passwordReset.storeCode, {
       accountId: account._id,
-      codeHash: await hashCode(code),
+      codeHash,
       expiresAt: Date.now() + CODE_TTL_MS,
       attemptsLeft: MAX_VERIFY_ATTEMPTS,
     });
-
-    // 5) Enviar, a la dirección ALMACENADA en la cuenta.
-    await sendResetCodeEmail(account.providerAccountId, code);
     return null;
   },
 });
