@@ -74,7 +74,10 @@ export const ResendOTPPasswordReset = Email<GenericDataModel>({
       body: JSON.stringify({
         from: FROM,
         to: [email],
-        subject: `Tu código para recuperar la contraseña: ${token}`,
+        // El código va SOLO en el cuerpo (KAR-97): en el asunto se vería en la
+        // vista previa del correo, en la pantalla de bloqueo y en las
+        // notificaciones de escritorio, donde puede leerlo quien no debe.
+        subject: "Recupera tu contraseña de KSE CRM",
         text:
           `Tu código para restablecer la contraseña de KSE CRM es: ${token}\n\n` +
           `Caduca en ${minutos} minutos y solo puede usarse una vez.\n\n` +
