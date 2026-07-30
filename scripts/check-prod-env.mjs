@@ -21,10 +21,23 @@ const PROHIBIDAS = {
     "vuelca los códigos de recuperación en claro en los logs del deployment",
 };
 
-/** Variables que solo son peligrosas con ciertos valores. */
+/**
+ * Variables que solo son peligrosas con ciertos valores.
+ *
+ * La comparación ignora mayúsculas y espacios, y es a propósito MÁS ESTRICTA
+ * que la librería. Hoy Convex Auth compara exacto —`LOG_LEVELS[AUTH_LOG_LEVEL]`
+ * es un lookup por clave y `AUTH_LOG_SECRETS !== "true"` es igualdad literal—,
+ * así que un `debug` en minúsculas sería inofensivo y aquí se marcará igual.
+ *
+ * Se prefiere ese falso positivo: bloquear un despliegue por un valor inocuo es
+ * una molestia visible que se arregla en un minuto, mientras que dejar pasar el
+ * valor peligroso porque la librería cambió de criterio sería un agujero
+ * silencioso. Además, quien escribe `debug` normalmente QUIERE logs de
+ * depuración, y conviene que se entere de que no los va a tener.
+ */
 const VALORES_PROHIBIDOS = {
   AUTH_LOG_LEVEL: {
-    malos: ["DEBUG"],
+    malos: ["debug"],
     porque:
       "Convex Auth registra los argumentos de sus funciones internas, " +
       "incluidos códigos de verificación en claro y perfiles de OAuth",
@@ -63,7 +76,7 @@ for (const [nombre, porque] of Object.entries(PROHIBIDAS)) {
 }
 for (const [nombre, { malos, porque }] of Object.entries(VALORES_PROHIBIDOS)) {
   const valor = entorno.get(nombre);
-  if (valor !== undefined && malos.includes(valor)) {
+  if (valor !== undefined && malos.includes(valor.trim().toLowerCase())) {
     problemas.push(`${nombre}=${valor} — ${porque}`);
   }
 }
