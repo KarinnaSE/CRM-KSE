@@ -9,7 +9,9 @@
  *
  * El envío se hace por la API REST de Resend con `fetch` (sin SDK, sin
  * dependencias nuevas). Requiere `RESEND_API_KEY` en el deployment (prod ya la
- * tiene; en dev hay que fijarla con `npx convex env set RESEND_API_KEY <key>`).
+ * tiene; en dev se fija con `npx convex env set RESEND_API_KEY`, SIN el valor en
+ * la línea de comandos: el CLI lo pide por stdin y así no queda en el historial
+ * del shell ni en la lista de procesos).
  */
 
 export const CODE_LENGTH = 6;
@@ -52,11 +54,15 @@ export async function sendResetCodeEmail(
     throw new Error("Falta RESEND_API_KEY en el entorno del deployment.");
   }
 
-  // Ayuda de DESARROLLO: `ALLOW_DEMO_SEED` es el marcador de "esto es dev" que ya
-  // usa convex/seed.ts, y en producción no existe. Hace falta porque el código se
-  // guarda con HMAC + pepper y ya no se puede recuperar de la base de datos como
-  // se hacía antes para las pruebas E2E.
-  if (process.env.ALLOW_DEMO_SEED) {
+  // Ayuda de DESARROLLO. Hace falta porque el código se guarda con HMAC + pepper
+  // y ya no se puede recuperar de la base de datos para las pruebas E2E.
+  //
+  // Tiene bandera PROPIA (`LOG_OTP_CODES`), separada de `ALLOW_DEMO_SEED`
+  // (KAR-102). Antes compartían una: quien quisiera sembrar datos de demo
+  // activaba de paso el volcado de códigos en los logs, y son riesgos distintos
+  // —uno destruye datos, el otro expone credenciales de un solo uso—. Con dos
+  // banderas, un despiste solo enciende una de las dos cosas.
+  if (process.env.LOG_OTP_CODES) {
     console.info(`[dev] código de recuperación para ${to}: ${code}`);
   }
 

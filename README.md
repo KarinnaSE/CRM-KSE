@@ -71,7 +71,8 @@ Se fijan con `npx convex env set` (añade `--prod` para producción) y hay que t
 | `RESEND_API_KEY` | **sí** | Envío del código de recuperación |
 | `PASSWORD_RESET_PEPPER` | **sí** | Clave del HMAC con el que se guardan los códigos |
 | `SITE_URL` | no | Destino válido de los redirects de OAuth |
-| `ALLOW_DEMO_SEED` | no | **Solo dev.** Habilita `seed:seedDemo` y `seed:clearAll`, y hace que el código de recuperación se escriba en el log |
+| `ALLOW_DEMO_SEED` | no | **Solo dev.** Habilita `seed:seedDemo` y `seed:clearAll` (borran datos) |
+| `LOG_OTP_CODES` | no | **Solo dev.** Escribe el código de recuperación en el log del deployment |
 
 **Las marcadas como secreto no se escriben en la línea de comandos.** Omite el valor y el CLI lo pide por stdin, así no queda en el historial del shell ni visible en la lista de procesos:
 
@@ -86,9 +87,26 @@ El panel de Convex (Settings → Environment Variables) es igual de válido y no
 
 ## Operación y seguridad
 
-**No pongas `AUTH_LOG_LEVEL=DEBUG` en producción.** Convex Auth registra los argumentos de sus funciones internas con ese nivel, y ahí van códigos de verificación en claro y perfiles completos de OAuth. Por defecto es `INFO`, así que basta con no tocarlo.
+### Comprobación antes de desplegar
 
-**`ALLOW_DEMO_SEED` nunca en producción.** Habilita `seed:clearAll`, que borra `users`, `authAccounts` y `authSessions`.
+```bash
+npm run check:prod-env
+```
+
+Falla si el deployment de producción tiene alguna variable peligrosa: `ALLOW_DEMO_SEED`, `LOG_OTP_CODES`, `AUTH_LOG_LEVEL=DEBUG` o `AUTH_LOG_SECRETS=true`. Es fail-closed — si no puede leer el entorno, también falla. Un aviso en un README no impide un despiste; esto sí.
+
+Qué hace peligrosa a cada una:
+
+- **`ALLOW_DEMO_SEED`** habilita `seed:clearAll`, que borra `users`, `authAccounts` y `authSessions`.
+- **`LOG_OTP_CODES`** escribe los códigos de recuperación en claro en los logs. Van separadas a propósito: activar el seed de demo no debe encender de paso el volcado de códigos, porque son riesgos distintos.
+- **`AUTH_LOG_LEVEL=DEBUG`** hace que Convex Auth registre los argumentos de sus funciones internas, con códigos de verificación en claro y perfiles completos de OAuth. Por defecto es `INFO`.
+- **`AUTH_LOG_SECRETS=true`** desactiva el redactado de secretos en esos mismos logs.
+
+### Riesgos aceptados a conciencia
+
+**El JWT de acceso se guarda en `localStorage`.** Un XSS podría leerlo y usarlo contra Convex. Se acepta porque el arreglo evidente (`storage="inMemory"`) rompe el login en esta app —comprobado— y porque el daño está acotado: el token dura 30 minutos y **no puede renovarse**, ya que el refresh token real vive solo en la cookie httpOnly. Además, revocar la sesión corta el acceso robado en el acto, porque la autorización valida contra `authSessions`. Lo que reduciría de verdad este riesgo es una CSP con `script-src`, pendiente.
+
+**Tres advisories altos de dependencias transitivas de Next 15.** No son explotables aquí: los de PostCSS son de compilación y todo el CSS es nuestro; los de sharp solo se alcanzan por `/_next/image`, que responde 400 a cualquier petición; y no usamos `next/image`, Server Actions ni rewrites. Cerrarlos exige subir a Next 16, un salto de versión mayor que merece su propia tarea.
 
 ### Break-glass: recuperar el acceso de una cuenta bloqueada
 

@@ -34,6 +34,10 @@ export function Providers({ children }: { children: ReactNode }) {
     );
   }
 
+  // OJO: `ConvexAuthNextjsProvider` NO acepta `storage`; solo desestructura
+  // `{ client, children }`. La opción se pasa en `ConvexAuthNextjsServerProvider`
+  // (app/layout.tsx), que es quien la reenvía al proveedor cliente. Ponerla aquí
+  // se ignora en silencio.
   return (
     <ConvexAuthNextjsProvider client={client}>
       {children}

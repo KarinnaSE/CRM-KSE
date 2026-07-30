@@ -6,6 +6,10 @@
  * seguimiento. La CSP que sí se pone se limita a `frame-ancestors`, que no
  * depende de nonces y tapa el agujero concreto: hasta ahora la pantalla de login
  * se podía embeber en un iframe (clickjacking sobre el formulario).
+ *
+ * Esa CSP pendiente importa más de lo que parece: el JWT de acceso vive en
+ * `localStorage` (riesgo aceptado, ver app/layout.tsx), así que `script-src` es
+ * lo que reduciría la probabilidad del XSS del que depende ese riesgo.
  */
 const securityHeaders = [
   // Doble candado antiframing: `frame-ancestors` es el estándar actual y
