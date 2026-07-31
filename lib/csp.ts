@@ -36,7 +36,7 @@
  * En DESARROLLO se trabaja siempre en bloqueo (ver `construirCSP`), que es donde
  * interesa que las violaciones duelan.
  */
-export const CSP_REPORT_ONLY = true;
+export const CSP_REPORT_ONLY = false;
 
 /**
  * Nombre de la cabecera, derivado de UNA SOLA fuente.
