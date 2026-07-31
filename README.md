@@ -102,6 +102,21 @@ Qué hace peligrosa a cada una:
 - **`AUTH_LOG_LEVEL=DEBUG`** hace que Convex Auth registre los argumentos de sus funciones internas, con códigos de verificación en claro y perfiles completos de OAuth. Por defecto es `INFO`.
 - **`AUTH_LOG_SECRETS=true`** desactiva el redactado de secretos en esos mismos logs.
 
+### Correos que manda el sistema
+
+Los dos van siempre a la dirección **almacenada en la cuenta** (`authAccounts.providerAccountId`), nunca a la que escriba quien rellena el formulario. Ninguno lleva contraseñas, códigos ni enlaces de un solo uso.
+
+| Correo | Cuándo | Si falla el envío |
+|---|---|---|
+| Código de recuperación | Al pedir recuperar la contraseña | **Rompe el flujo.** Sin correo no hay nada que hacer con la pantalla del código. |
+| Aviso de cambio de contraseña | Después de cambiarla (recuperación o break-glass) | **No rompe nada.** Ver abajo. |
+
+**El aviso de cambio es best-effort, a conciencia.** No se envía en línea: se programa con `ctx.scheduler.runAfter(0, …)` y se manda en otro trabajo. El motivo es que ese correo nunca puede hacer fracasar un cambio de contraseña, y eso son dos cosas distintas: no propagar el error (basta un `try/catch`) y no gastar el tiempo de la función que lo llama (no basta). Si Resend se quedara pendiente y el runtime abortara la ejecución, no habría `catch` que corriera, y la pantalla de login traduce cualquier error a "El código no es válido o ha caducado" — con la contraseña ya cambiada y las sesiones ya cerradas.
+
+Consecuencia que hay que asumir: **si el aviso falla, el cambio de contraseña NO se revierte** y la titular no se entera. El único rastro es el registro del deployment con prefijo `[passwordChangedEmail]`, y el trabajo consta como fallido en el panel de Convex. No hay reintentos.
+
+El enlace a la pantalla de inicio de sesión sale de `SITE_URL` y solo se incluye si es `https` (o `http` contra `localhost`). Si no lo es, el correo sale sin enlace: un aviso de seguridad mal configurado que enseñe a pinchar un dominio ajeno es peor que uno sin enlace.
+
 ### Riesgos aceptados a conciencia
 
 **El JWT de acceso se guarda en `localStorage`.** Un XSS podría leerlo y usarlo contra Convex. Se acepta porque el arreglo evidente (`storage="inMemory"`) rompe el login en esta app —comprobado— y porque el daño está acotado: el token dura 30 minutos y **no puede renovarse**, ya que el refresh token real vive solo en la cookie httpOnly. Además, revocar la sesión corta el acceso robado en el acto, porque la autorización valida contra `authSessions`. Lo que reduciría de verdad este riesgo es una CSP con `script-src`, pendiente.
@@ -126,7 +141,9 @@ npx convex run provisionUsers:resetUserPassword --prod \
 npx convex env remove BREAK_GLASS_PASSWORD_MARTA --prod
 ```
 
-Cambia la contraseña, cierra las sesiones abiertas de esa persona y limpia su contador de intentos fallidos.
+Cambia la contraseña, cierra las sesiones abiertas de esa persona y limpia su contador de intentos fallidos, y programa el aviso por correo a la titular.
+
+La salida dice `avisoProgramado`, **no "enviado"**: el correo sale en otro trabajo, unos milisegundos después. Para confirmar que llegó de verdad hay que mirar los registros del deployment (`[passwordChangedEmail]`). Precisamente en este escenario el buzón puede ser lo que no funciona.
 
 Dos cosas que hay que respetar:
 

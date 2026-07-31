@@ -66,3 +66,42 @@ export function mxDateStringToEpoch(value: string): number {
   if (!Number.isFinite(ms)) throw new Error("Fecha inválida.");
   return ms;
 }
+
+const MESES = [
+  "enero",
+  "febrero",
+  "marzo",
+  "abril",
+  "mayo",
+  "junio",
+  "julio",
+  "agosto",
+  "septiembre",
+  "octubre",
+  "noviembre",
+  "diciembre",
+];
+
+/**
+ * Fecha y hora legibles en zona de negocio, para meter en un correo (KAR-106).
+ * Ejemplo: "30 de julio de 2026 a las 16:42 (hora de Ciudad de México)".
+ *
+ * Se apoya en el mismo desfase fijo que el resto del módulo en vez de usar
+ * `Intl.DateTimeFormat` con `timeZone`, para no depender de que el runtime traiga
+ * la base de datos de zonas horarias completa. Es una suposición que no hace
+ * falta hacer, y si CDMX volviera a observar horario de verano habría que tocar
+ * este archivo de todas formas (ver la cabecera).
+ *
+ * El desplazamiento se aplica al instante y luego se leen los campos en UTC: así
+ * `getUTCHours()` devuelve la hora de CDMX sin depender de la zona horaria del
+ * proceso, que en un servidor puede ser cualquiera.
+ */
+export function formatMxDateTime(epoch: number): string {
+  const local = new Date(epoch - MX_OFFSET_MS);
+  const dia = local.getUTCDate();
+  const mes = MESES[local.getUTCMonth()];
+  const anio = local.getUTCFullYear();
+  const hora = String(local.getUTCHours()).padStart(2, "0");
+  const minuto = String(local.getUTCMinutes()).padStart(2, "0");
+  return `${dia} de ${mes} de ${anio} a las ${hora}:${minuto} (hora de Ciudad de México)`;
+}
