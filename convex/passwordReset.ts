@@ -220,6 +220,36 @@ export const resetPassword = action({
       accountId: account._id,
     });
 
+    // Aviso a la titular (KAR-106). Va EL ÚLTIMO: solo se avisa de lo que ya ha
+    // ocurrido de verdad.
+    //
+    // Se PROGRAMA, no se envía aquí. El aviso no puede hacer fracasar el cambio
+    // de contraseña, y eso son dos cosas distintas: no propagar el error (lo da
+    // este try/catch) y no gastar el tiempo de esta action (lo da el
+    // programador). Si se enviara en línea y Resend se quedara pendiente, el
+    // runtime abortaría la ejecución sin que el `catch` llegara a correr; la
+    // pantalla de login traduce CUALQUIER error de `resetPassword` a "El código
+    // no es válido o ha caducado." (ver onVerifyCode en app/(auth)/login/page.tsx),
+    // así que la usuaria leería eso con la contraseña ya cambiada y todas sus
+    // sesiones cerradas. Por ese motivo este `catch` no puede convertirse jamás
+    // en un `throw`.
+    //
+    // Programar es una llamada interna y rápida, pero si aun así fallara,
+    // tampoco puede llevarse por delante un cambio de contraseña ya hecho.
+    try {
+      await ctx.scheduler.runAfter(0, internal.passwordChangedEmail.send, {
+        to: account.providerAccountId,
+        changedAt: Date.now(),
+        origen: "recuperacion",
+      });
+    } catch (e) {
+      console.error(
+        "[passwordReset] La contraseña SÍ se cambió, pero no se pudo programar " +
+          "el aviso a la titular.",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+
     return null;
   },
 });

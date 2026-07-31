@@ -265,9 +265,35 @@ export const resetUserPassword = internalAction({
       accountId: account._id,
     });
 
+    // Aviso a la titular (KAR-106), el último y programado, por el mismo motivo
+    // que en passwordReset:resetPassword. Aquí importa especialmente: esta es la
+    // puerta de emergencia, la que menos rastro deja, y el aviso la hace visible.
+    let avisoProgramado = false;
+    try {
+      await ctx.scheduler.runAfter(0, internal.passwordChangedEmail.send, {
+        to: account.providerAccountId,
+        changedAt: Date.now(),
+        origen: "soporte",
+      });
+      avisoProgramado = true;
+    } catch (e) {
+      console.error(
+        "[provisionUsers] La contraseña SÍ se cambió, pero no se pudo programar " +
+          "el aviso a la titular.",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+
     return {
       email,
-      note: `Contraseña cambiada y bloqueo limpiado. BORRA YA ${varName} del deployment.`,
+      // `avisoProgramado`, NO "avisoEnviado": el envío ocurre después, en otro
+      // trabajo. Decir "enviado" sería mentirle al operador en el peor momento
+      // posible — y este comando se usa justo cuando algo ya ha ido mal.
+      avisoProgramado,
+      note:
+        `Contraseña cambiada y bloqueo limpiado. BORRA YA ${varName} del ` +
+        `deployment. El aviso a la titular se envía aparte: confirma en los ` +
+        `registros del deployment que salió (prefijo [passwordChangedEmail]).`,
     };
   },
 });
