@@ -115,7 +115,9 @@ Los dos van siempre a la dirección **almacenada en la cuenta** (`authAccounts.p
 
 Consecuencia que hay que asumir: **si el aviso falla, el cambio de contraseña NO se revierte** y la titular no se entera. El único rastro es el registro del deployment con prefijo `[passwordChangedEmail]`, y el trabajo consta como fallido en el panel de Convex. No hay reintentos.
 
-El enlace a la pantalla de inicio de sesión sale de `SITE_URL` y solo se incluye si es `https` (o `http` contra `localhost`). Si no lo es, el correo sale sin enlace: un aviso de seguridad mal configurado que enseñe a pinchar un dominio ajeno es peor que uno sin enlace.
+El enlace a la pantalla de inicio de sesión sale de `SITE_URL` y solo se incluye si cumple **las tres** reglas: se construye con `new URL` (nunca concatenando), el esquema es `https` (o `http` en `localhost`), y **el host está en la lista cerrada de `convex/email.ts`** (`HOSTS_PERMITIDOS`, hoy solo `crm-kse.com`). Si falla cualquiera, el correo sale sin enlace: un aviso de seguridad mal configurado que enseñe a pinchar un dominio ajeno es peor que uno sin enlace.
+
+Esa lista está escrita a mano a propósito. Si saliera de `SITE_URL` no defendería de nada, porque de lo que defiende es justamente de que `SITE_URL` esté mal — un valor como `https://crm-kse.com.atacante.net` pasaba las otras dos reglas sin problema. **Si algún día cambia el dominio del CRM, hay que tocar esa lista**, o los correos dejarán de llevar enlace.
 
 ### Riesgos aceptados a conciencia
 
