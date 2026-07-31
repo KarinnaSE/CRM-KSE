@@ -119,6 +119,26 @@ El enlace a la pantalla de inicio de sesión sale de `SITE_URL` y solo se incluy
 
 Esa lista está escrita a mano a propósito. Si saliera de `SITE_URL` no defendería de nada, porque de lo que defiende es justamente de que `SITE_URL` esté mal — un valor como `https://crm-kse.com.atacante.net` pasaba las otras dos reglas sin problema. **Si algún día cambia el dominio del CRM, hay que tocar esa lista**, o los correos dejarán de llevar enlace.
 
+### Content Security Policy
+
+La CSP la emite `middleware.ts` en cada petición, construida en `lib/csp.ts`. **No está en `next.config.mjs`** y no puede estarlo: lleva un nonce distinto por petición y un `connect-src` que depende de `NEXT_PUBLIC_CONVEX_URL`, que cambia entre dev y producción.
+
+| Directiva | Valor | Por qué |
+|---|---|---|
+| `script-src` | `'self' 'nonce-…' 'strict-dynamic'` (+ `'unsafe-eval'` **solo en dev**) | Lo que de verdad frena un XSS. `strict-dynamic` deja que los chunks de Next hereden la confianza del script de arranque. `next dev` necesita `eval` para los source maps. |
+| `style-src` | `'self' 'unsafe-inline'` | **Concesión consciente.** La interfaz usa 15 atributos `style={{…}}` en 8 archivos; sin esto se queda sin diseño. Con estilos no se roba un token. |
+| `connect-src` | `'self'` + Convex `https:` y `wss:` | **`'self'` no es opcional:** `signIn` y `signOut` van por un fetch same-origin a `/api/auth`, y las transiciones de Next piden sus payloads al propio origen. `default-src 'self'` **no** cubre esto: cuando `connect-src` existe, sustituye al respaldo de `default-src`. |
+| `frame-ancestors` | `'none'` | Antiframing. `X-Frame-Options: DENY` sigue en `next.config.mjs` como segundo candado. |
+
+**Modo de la CSP:** la constante `CSP_REPORT_ONLY` de `lib/csp.ts` decide si la cabecera es `Content-Security-Policy-Report-Only` (solo informa) o `Content-Security-Policy` (bloquea). Valores esperados:
+
+- **`true`** en el primer despliegue — nada se bloquea, las violaciones solo aparecen en la consola del navegador.
+- **`false`** una vez comprobado en producción que no hay violaciones.
+
+Se despliega en dos pasos a propósito: una CSP mal calibrada no degrada la aplicación, la rompe, y en producción hay dos usuarias sin forma de avisar. Cambiar de modo es cambiar esa línea, así que en una revisión se ve de un vistazo si se está activando el bloqueo.
+
+Si algún día se apunta a otro backend de Convex, la CSP lo sigue **solo si cambia `NEXT_PUBLIC_CONVEX_URL`**. Y si se sube a Next 16 (KAR-104), hay que volver a comprobar que el nonce sigue llegando al HTML: esa parte es interna de Next.
+
 ### Riesgos aceptados a conciencia
 
 **El JWT de acceso se guarda en `localStorage`.** Un XSS podría leerlo y usarlo contra Convex. Se acepta porque el arreglo evidente (`storage="inMemory"`) rompe el login en esta app —comprobado— y porque el daño está acotado: el token dura 30 minutos y **no puede renovarse**, ya que el refresh token real vive solo en la cookie httpOnly. Además, revocar la sesión corta el acceso robado en el acto, porque la autorización valida contra `authSessions`. Lo que reduciría de verdad este riesgo es una CSP con `script-src`, pendiente.
