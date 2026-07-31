@@ -81,10 +81,26 @@ export function construirCSP({
   convexUrl: string | undefined;
 }): string {
   // Convex se habla por HTTPS y por WebSocket contra el mismo host.
+  //
+  // El esquema se deriva con `new URL` en vez de con un reemplazo de texto: un
+  // `replace(/^https:/…)` sobre una URL que no fuera https no habría fallado,
+  // habría metido dos veces el mismo origen y dejado la aplicación sin
+  // WebSocket, que es peor que fallar. Si el valor no es una URL válida se
+  // omite y se registra: la CSP sale con `'self'` y la aplicación fallará por
+  // otros motivos, porque el proveedor de Convex ya es fail-closed.
   const convex: string[] = [];
   if (convexUrl) {
-    convex.push(convexUrl);
-    convex.push(convexUrl.replace(/^https:/, "wss:"));
+    try {
+      const url = new URL(convexUrl);
+      const esquemaWs = url.protocol === "http:" ? "ws:" : "wss:";
+      convex.push(url.origin);
+      convex.push(`${esquemaWs}//${url.host}`);
+    } catch {
+      console.error(
+        `[csp] NEXT_PUBLIC_CONVEX_URL no es una URL válida (${convexUrl}); ` +
+          `connect-src saldrá sin Convex y la aplicación no podrá hablar con el backend.`,
+      );
+    }
   }
 
   const directivas = [
