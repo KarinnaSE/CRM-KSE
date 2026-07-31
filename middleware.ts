@@ -1,8 +1,10 @@
+import { NextResponse } from "next/server";
 import {
   convexAuthNextjsMiddleware,
   createRouteMatcher,
   nextjsMiddlewareRedirect,
 } from "@convex-dev/auth/nextjs/server";
+import { construirCSP, generarNonce, nombreCabeceraCSP } from "@/lib/csp";
 
 /**
  * Protección de rutas (KAR-7, AC#1 capa UI). Un usuario sin sesión que pida
@@ -28,12 +30,39 @@ const isProtectedRoute = createRouteMatcher([
 export default convexAuthNextjsMiddleware(async (request, { convexAuth }) => {
   const authenticated = await convexAuth.isAuthenticated();
 
+  // Las redirecciones van ANTES de montar la CSP: una redirección no renderiza
+  // HTML, así que no hay ningún script al que aplicarle un nonce.
   if (isSignInPage(request) && authenticated) {
     return nextjsMiddlewareRedirect(request, "/seguimientos");
   }
   if (isProtectedRoute(request) && !authenticated) {
     return nextjsMiddlewareRedirect(request, "/login");
   }
+
+  // CSP con nonce por petición (KAR-103). La cabecera va en DOS sitios y cada
+  // uno tiene su motivo:
+  //   - en la PETICIÓN, para que Next lea el nonce de `script-src` y se lo
+  //     ponga a los scripts que inyecta;
+  //   - en la RESPUESTA, para que el navegador aplique la política.
+  // Si se pusiera solo en la respuesta, Next no marcaría sus scripts y la
+  // página se quedaría en blanco al pasar a modo bloqueo.
+  const esDesarrollo = process.env.NODE_ENV === "development";
+  const nonce = generarNonce();
+  const csp = construirCSP({
+    nonce,
+    esDesarrollo,
+    convexUrl: process.env.NEXT_PUBLIC_CONVEX_URL,
+  });
+  const cabecera = nombreCabeceraCSP(esDesarrollo);
+
+  const cabecerasPeticion = new Headers(request.headers);
+  cabecerasPeticion.set(cabecera, csp);
+
+  const response = NextResponse.next({
+    request: { headers: cabecerasPeticion },
+  });
+  response.headers.set(cabecera, csp);
+  return response;
 });
 
 export const config = {

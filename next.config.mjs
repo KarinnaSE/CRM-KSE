@@ -1,20 +1,20 @@
 /**
  * Cabeceras de seguridad (KAR-101, hallazgo B3). Se aplican a TODAS las rutas.
  *
- * Lo que NO está aquí: una CSP completa con `script-src`. Next inyecta scripts
- * inline y exigiría generar un nonce por petición en el middleware; queda como
- * seguimiento. La CSP que sí se pone se limita a `frame-ancestors`, que no
- * depende de nonces y tapa el agujero concreto: hasta ahora la pantalla de login
- * se podía embeber en un iframe (clickjacking sobre el formulario).
+ * Aquí solo quedan las que NO dependen de la petición. La CSP se fue a
+ * `middleware.ts` en KAR-103, porque lleva un nonce distinto en cada petición y
+ * un `connect-src` que depende de `NEXT_PUBLIC_CONVEX_URL`, y ninguna de las dos
+ * cosas se puede expresar en una cabecera estática.
  *
- * Esa CSP pendiente importa más de lo que parece: el JWT de acceso vive en
- * `localStorage` (riesgo aceptado, ver app/layout.tsx), así que `script-src` es
- * lo que reduciría la probabilidad del XSS del que depende ese riesgo.
+ * Ya no se emite `Content-Security-Policy` desde aquí, ni siquiera el
+ * `frame-ancestors` que había antes: dos cabeceras con el mismo nombre se
+ * INTERSECAN —gana la más restrictiva—, y eso convierte cualquier depuración
+ * futura en un acertijo. `frame-ancestors 'none'` está ahora en `lib/csp.ts`.
  */
 const securityHeaders = [
-  // Doble candado antiframing: `frame-ancestors` es el estándar actual y
-  // X-Frame-Options cubre a los navegadores que aún no lo aplican.
-  { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+  // Segundo candado antiframing. `frame-ancestors`, que es el estándar actual,
+  // va en la CSP del middleware; esto cubre a los navegadores que aún no lo
+  // aplican.
   { key: "X-Frame-Options", value: "DENY" },
   // Impide que el navegador adivine el tipo de contenido (evita que una
   // respuesta acabe ejecutándose como script).
