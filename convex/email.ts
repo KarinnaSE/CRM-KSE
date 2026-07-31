@@ -35,6 +35,20 @@ const FROM = "KSE CRM <no-reply@crm-kse.com>"; // dominio verificado en Resend
  */
 const TIMEOUT_MS = 8_000;
 
+/**
+ * Tope para leer el cuerpo de una respuesta de error.
+ *
+ * Va aparte de TIMEOUT_MS porque cubre otro tramo: cuando `fetch` resuelve, el
+ * temporizador abortable ya se ha limpiado, pero el CUERPO puede seguir
+ * llegando. Sin este tope, una respuesta de error que no termina de descargarse
+ * dejaría `sendEmail` pendiente aunque la petición ya hubiera "respondido". En
+ * el aviso de cambio de contraseña eso no afectaría a nadie (va en un trabajo
+ * programado), pero el correo del código sí está en el camino crítico de
+ * `requestCode`. Es corto a propósito: esto solo sirve para diagnosticar, y un
+ * mensaje sin detalle es mejor que una función colgada.
+ */
+const CUERPO_ERROR_TIMEOUT_MS = 2_000;
+
 /** Correo ya compuesto: lo que devuelven los `build*Email` de cada flujo. */
 export type EmailContent = {
   subject: string;
@@ -88,13 +102,44 @@ export async function sendEmail(
   }
 
   if (!response.ok) {
-    // Se recorta el cuerpo de la respuesta: hace falta algo para diagnosticar,
-    // pero volcar entero lo que devuelva un tercero puede acabar metiendo datos
-    // de la destinataria en los logs.
-    const detalle = (await response.text().catch(() => "")).slice(0, 200);
     throw new Error(
-      `Resend rechazó el envío (HTTP ${response.status}). ${detalle}`,
+      `Resend rechazó el envío (HTTP ${response.status}). ${await leerDetalleDelError(response)}`,
     );
+  }
+}
+
+/**
+ * Lee el cuerpo de una respuesta de error para poder diagnosticar.
+ *
+ * Acotado EN TIEMPO, por lo explicado en `CUERPO_ERROR_TIMEOUT_MS`.
+ *
+ * Del tamaño solo se acota lo que SALE: el `slice` evita volcar en los logs
+ * entero lo que devuelva un tercero, que podría acabar metiendo ahí datos de la
+ * destinataria. Lo que NO se acota es lo que ENTRA — `response.text()` lee el
+ * cuerpo completo en memoria si llega dentro del plazo. Hoy se asume porque el
+ * tercero es Resend y el tiempo ya está topado; el día que eso deje de bastar,
+ * hay que leer por trozos, y entonces este comentario deja de valer.
+ *
+ * Nunca lanza: el error que importa es el HTTP, no el de leer su explicación.
+ */
+async function leerDetalleDelError(response: Response): Promise<string> {
+  const AGOTADO = Symbol("agotado");
+  let temporizador: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    const cuerpo = await Promise.race([
+      // Un fallo al leer se trata como cuerpo vacío, no como excepción.
+      response.text().catch(() => ""),
+      new Promise<typeof AGOTADO>((resolve) => {
+        temporizador = setTimeout(() => resolve(AGOTADO), CUERPO_ERROR_TIMEOUT_MS);
+      }),
+    ]);
+    if (cuerpo === AGOTADO) {
+      return "(el cuerpo de la respuesta no llegó a tiempo)";
+    }
+    return cuerpo.slice(0, 200);
+  } finally {
+    clearTimeout(temporizador);
   }
 }
 
@@ -134,12 +179,35 @@ export function escapeHtml(valor: string): string {
 }
 
 /**
+ * Hosts a los que este sistema puede enlazar desde un correo. Lista CERRADA y
+ * escrita a mano a propósito: si saliera de `SITE_URL` no defendería de nada,
+ * porque de lo que defiende es precisamente de que `SITE_URL` esté mal.
+ *
+ * `www.crm-kse.com` NO está, y no es un olvido: comprobado que no resuelve, así
+ * que enlazarlo mandaría a la gente a un sitio caído. Si algún día se configura,
+ * se añade aquí.
+ */
+const HOSTS_PERMITIDOS = new Set(["crm-kse.com"]);
+
+/** Hosts de desarrollo, para que el entorno local siga siendo útil. */
+const HOSTS_LOCALES = new Set(["localhost", "127.0.0.1"]);
+
+/**
  * URL de la pantalla de inicio de sesión, o `null` si `SITE_URL` no vale.
  *
- * Se construye con `new URL`, nunca concatenando cadenas, y se exige `https:`
- * (o `http:` contra localhost, para que el entorno de desarrollo siga siendo
- * útil). Motivo: un correo de seguridad mal configurado que enseñe a pinchar un
- * dominio ajeno es peor que un correo sin enlace. Ante la duda, sin enlace.
+ * Tres reglas, y las tres tienen que cumplirse:
+ *   1. Se construye con `new URL`, nunca concatenando cadenas.
+ *   2. El esquema es `https:` (o `http:` en un host local).
+ *   3. El host está en la lista de arriba.
+ *
+ * La tercera es la que se añadió en KAR-107. Con solo las dos primeras, un
+ * `SITE_URL` mal puesto como `https://crm-kse.com.atacante.net` pasaba la
+ * validación y acababa como enlace dentro de un correo de seguridad: un dominio
+ * ajeno que se parece al nuestro, en el correo que precisamente avisa de que
+ * alguien te ha tocado la cuenta.
+ *
+ * Ante cualquier duda, `null`: el correo sale sin enlace. Un correo de seguridad
+ * que enseña a pinchar el dominio equivocado es peor que uno sin enlace.
  */
 export function loginUrl(): string | null {
   const base = process.env.SITE_URL;
@@ -155,10 +223,18 @@ export function loginUrl(): string | null {
     return null;
   }
 
-  const esLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  // `url.hostname` ya viene normalizado en minúsculas por el propio `URL`.
+  const esLocal = HOSTS_LOCALES.has(url.hostname);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && esLocal)) {
     console.error(
       `[email] SITE_URL no es https (${base}); el correo saldrá sin enlace.`,
+    );
+    return null;
+  }
+  if (!esLocal && !HOSTS_PERMITIDOS.has(url.hostname)) {
+    console.error(
+      `[email] SITE_URL apunta a un host no permitido (${url.hostname}); ` +
+        `el correo saldrá sin enlace.`,
     );
     return null;
   }
