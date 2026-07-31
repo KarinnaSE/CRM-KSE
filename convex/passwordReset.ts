@@ -1,11 +1,11 @@
 import { action, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import {
   invalidateSessions,
   modifyAccountCredentials,
 } from "@convex-dev/auth/server";
-import { normalizeEmail, validatePassword } from "./authShared";
+import { normalizeEmail, passwordProblem } from "./authShared";
 import {
   CODE_TTL_MS,
   generateNumericCode,
@@ -41,10 +41,28 @@ const MAX_VERIFY_ATTEMPTS = 5;
 
 /**
  * Mensaje ÚNICO para todos los fallos de verificación. Que sea el mismo para
- * "no hay código", "caducado", "sin intentos" y "código incorrecto" evita que la
- * pantalla se convierta en un oráculo.
+ * "no hay código", "caducado", "sin intentos", "código incorrecto" y "ese correo
+ * no tiene cuenta" evita que la pantalla se convierta en un oráculo.
  */
 const INVALID_CODE = "El código no es válido o ha caducado.";
+
+/**
+ * Los fallos PREVISTOS de este archivo se lanzan como `ConvexError` (KAR-98).
+ *
+ * La diferencia no es cosmética: el `data` de un `ConvexError` llega íntegro al
+ * navegador, mientras que el mensaje de un `Error` normal lo REDACTA Convex en
+ * producción. Eso convierte el tipo del error en el contrato: `ConvexError`
+ * significa "esto se le puede enseñar a quien llamó y le sirve para actuar".
+ *
+ * Antes aquí se lanzaba `Error` para todo, y la pantalla de login, que no podía
+ * distinguir, respondía "El código no es válido o ha caducado." ante CUALQUIER
+ * fallo — incluidos un pepper mal puesto o Convex inaccesible. Le decía a la
+ * usuaria que su código no valía cuando el código estaba perfectamente bien.
+ *
+ * Regla al tocar este archivo: si el fallo es de configuración, de la librería o
+ * de la base de datos, `Error` normal, para que el cliente lo trate como
+ * imprevisto. `ConvexError` es solo para lo que la usuaria puede corregir.
+ */
 
 /**
  * HMAC-SHA256 del código con el pepper del deployment, en hexadecimal.
@@ -184,21 +202,30 @@ export const resetPassword = action({
     newPassword: v.string(),
   },
   handler: async (ctx, args) => {
-    // La política de contraseñas se aplica antes de tocar nada. Este error SÍ es
-    // específico: la usuaria necesita saber qué le falta a su contraseña.
-    validatePassword(args.newPassword);
+    // La política de contraseñas se aplica ANTES de tocar nada, y en particular
+    // antes de consumir un intento del código: escribir una contraseña floja no
+    // debe costarle a nadie uno de sus cinco intentos.
+    //
+    // Este mensaje SÍ es específico —la usuaria necesita saber qué le falta a su
+    // contraseña— y puede serlo sin abrir nada: habla de lo que ella acaba de
+    // escribir, no del estado del sistema. Se usa `passwordProblem`, que devuelve
+    // el problema en vez de lanzarlo, para poder envolverlo en `ConvexError`;
+    // `validatePassword` sigue existiendo con su firma para la librería.
+    const problema = passwordProblem(args.newPassword);
+    if (problema !== null) throw new ConvexError(problema);
 
     const email = normalizeEmail(args.email);
     const account = await ctx.runQuery(internal.passwordReset.accountByEmail, {
       email,
     });
-    if (account === null) throw new Error(INVALID_CODE);
+    // Un correo sin cuenta responde EXACTAMENTE lo mismo que un código malo.
+    if (account === null) throw new ConvexError(INVALID_CODE);
 
     const resultado = await ctx.runMutation(
       internal.passwordReset.consumeCode,
       { accountId: account._id, codeHash: await hashCode(args.code) },
     );
-    if (!resultado.ok) throw new Error(INVALID_CODE);
+    if (!resultado.ok) throw new ConvexError(INVALID_CODE);
 
     // Cambia el secreto de la cuenta EXISTENTE. `modifyAccountCredentials` lanza
     // si la cuenta no existe, así que esto no puede crear cuentas: el registro

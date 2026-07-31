@@ -4,8 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation } from "convex/react";
-import { ConvexError } from "convex/values";
 import { api } from "@/convex/_generated/api";
+import { backendMessage } from "@/lib/errores";
 import { cn, STAGES, type StageKey } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 
@@ -32,16 +32,6 @@ const STAGE_DESC: Record<StageKey, string> = {
 const labelClass = "text-sm font-medium text-text-primary";
 const fieldClass =
   "h-10 w-full rounded-md border border-border bg-surface px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary focus:border-interactive focus:ring-2 focus:ring-focus-ring disabled:opacity-60";
-
-/**
- * Extrae el mensaje del backend cuando es un ConvexError con `data` string; si no
- * (Error normal, red, prod), cae al mensaje genérico. La validación de negocio se
- * hace además en el cliente antes de enviar, así que esto solo cubre imprevistos.
- */
-function backendMessage(e: unknown, fallback: string): string {
-  if (e instanceof ConvexError && typeof e.data === "string") return e.data;
-  return fallback;
-}
 
 export default function NuevoClientePage() {
   const router = useRouter();
