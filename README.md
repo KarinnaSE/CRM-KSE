@@ -141,7 +141,13 @@ Si algún día se apunta a otro backend de Convex, la CSP lo sigue **solo si cam
 
 ### Riesgos aceptados a conciencia
 
-**El JWT de acceso se guarda en `localStorage`.** Un XSS podría leerlo y usarlo contra Convex. Se acepta porque el arreglo evidente (`storage="inMemory"`) rompe el login en esta app —comprobado— y porque el daño está acotado: el token dura 30 minutos y **no puede renovarse**, ya que el refresh token real vive solo en la cookie httpOnly. Además, revocar la sesión corta el acceso robado en el acto, porque la autorización valida contra `authSessions`. Lo que reduciría de verdad este riesgo es una CSP con `script-src`, pendiente.
+**El JWT de acceso se guarda en `localStorage`.** Un XSS podría leerlo y usarlo contra Convex.
+
+*Por qué no se arregla:* el arreglo evidente, `storage="inMemory"`, **no funciona por un fallo de `@convex-dev/auth` 0.0.94** (la última publicada). La opción no pasa un almacén en memoria sino `null`, y el almacén al que se cae acaba siendo **de solo escritura**: `getItem` cierra sobre el objeto de estado inicial y devuelve `undefined` siempre. Consecuencia: el cliente nunca puede releer lo que guardó, adopta a ciegas el estado que le manda el servidor y, en el instante posterior a `signIn` en que ese estado aún viene sin token, se desconecta solo. Medido en KAR-103: la sesión **sí** se crea en el backend y el propio cliente la borra tres segundos después. Ver el análisis completo en el comentario de `app/layout.tsx`.
+
+No se puede sortear desde la aplicación: el tipo de la opción es cerrado (`"localStorage" | "inMemory"`), así que no se puede inyectar un almacén propio, y parchear el interior de la librería cambiaría un riesgo conocido por uno desconocido.
+
+*Qué queda expuesto, medido:* solo el JWT de acceso. El refresh token que se guarda a su lado es **literalmente la cadena `"dummy"`** —comprobado en el navegador—; el real vive solo en la cookie httpOnly. Ese JWT dura 30 minutos, **no puede renovarse**, y revocar la sesión corta el acceso robado en el acto porque la autorización valida contra `authSessions`. Y desde KAR-103 hay una **CSP con `script-src` en modo bloqueo**, así que para leerlo hay que vencer primero esa política.
 
 **Tres advisories altos de dependencias transitivas de Next 15.** No son explotables aquí: los de PostCSS son de compilación y todo el CSS es nuestro; los de sharp solo se alcanzan por `/_next/image`, que responde 400 a cualquier petición; y no usamos `next/image`, Server Actions ni rewrites. Cerrarlos exige subir a Next 16, un salto de versión mayor que merece su propia tarea.
 
