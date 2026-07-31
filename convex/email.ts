@@ -109,12 +109,16 @@ export async function sendEmail(
 }
 
 /**
- * Lee el cuerpo de una respuesta de error para poder diagnosticar, acotado en
- * TIEMPO y en TAMAÑO.
+ * Lee el cuerpo de una respuesta de error para poder diagnosticar.
  *
- * - En tiempo, por lo explicado en `CUERPO_ERROR_TIMEOUT_MS`.
- * - En tamaño, porque volcar entero lo que devuelva un tercero puede acabar
- *   metiendo datos de la destinataria en los logs.
+ * Acotado EN TIEMPO, por lo explicado en `CUERPO_ERROR_TIMEOUT_MS`.
+ *
+ * Del tamaño solo se acota lo que SALE: el `slice` evita volcar en los logs
+ * entero lo que devuelva un tercero, que podría acabar metiendo ahí datos de la
+ * destinataria. Lo que NO se acota es lo que ENTRA — `response.text()` lee el
+ * cuerpo completo en memoria si llega dentro del plazo. Hoy se asume porque el
+ * tercero es Resend y el tiempo ya está topado; el día que eso deje de bastar,
+ * hay que leer por trozos, y entonces este comentario deja de valer.
  *
  * Nunca lanza: el error que importa es el HTTP, no el de leer su explicación.
  */
