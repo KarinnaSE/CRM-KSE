@@ -10,6 +10,7 @@ import {
   normalizeEmail,
   passwordProblem,
 } from "@/convex/authShared";
+import { backendMessage } from "@/lib/errores";
 import { Button } from "@/components/ui/Button";
 
 /**
@@ -216,8 +217,27 @@ function LoginInner() {
     setNotice(null);
     try {
       await resetPassword({ email: normalized, code, newPassword });
-    } catch {
-      setError("El código no es válido o ha caducado.");
+    } catch (e) {
+      // Antes esto era `catch { setError("El código no es válido…") }`, que le
+      // echaba la culpa al código pasara lo que pasara: un corte de red, un
+      // pepper mal puesto o Convex caído se le presentaban a la usuaria como
+      // "tu código no vale", que es justo el consejo contrario al que necesita.
+      //
+      // Ahora manda el backend: si el fallo es previsto llega como ConvexError
+      // con su mensaje, y si no, se usa el genérico. Ver lib/errores.ts.
+      //
+      // El genérico dice "pide un código nuevo" a propósito. Hay un caso que
+      // desde aquí no se puede distinguir: si la petición llegó y consumió el
+      // código pero la respuesta se perdió por el camino, el código ya no sirve
+      // aunque el fallo pareciera de red. Pedir otro es el consejo correcto en
+      // los dos casos.
+      setError(
+        backendMessage(
+          e,
+          "No pudimos cambiar tu contraseña. Revisa tu conexión e inténtalo " +
+            "de nuevo; si vuelve a fallar, pide un código nuevo.",
+        ),
+      );
       setResetLoading(false);
       return;
     }

@@ -3,9 +3,9 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation } from "convex/react";
-import { ConvexError } from "convex/values";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { backendMessage } from "@/lib/errores";
 import { cn, STAGES, type StageKey } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/clientes/Modal";
@@ -23,16 +23,6 @@ import { mxDateInputValue } from "@/components/clientes/format";
  */
 
 type ModalKind = "stage" | "nota" | "seguimiento" | "venta" | null;
-
-/**
- * Extrae el mensaje de error del backend cuando es conocido (ConvexError con `data` string:
- * "Fecha inválida.", "El cliente no existe.", validaciones de campo…) y cae al mensaje genérico
- * solo para errores inesperados (red, redacción en prod). Así el usuario recibe una causa accionable.
- */
-function backendMessage(e: unknown, fallback: string): string {
-  if (e instanceof ConvexError && typeof e.data === "string") return e.data;
-  return fallback;
-}
 
 const labelClass = "text-sm font-medium text-text-primary";
 const fieldClass =
