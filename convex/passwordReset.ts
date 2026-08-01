@@ -6,12 +6,13 @@ import {
   invalidateSessions,
   modifyAccountCredentials,
 } from "@convex-dev/auth/server";
-import { normalizeEmail, passwordProblem } from "./authShared";
+import { INVITE_TTL_MS, normalizeEmail, passwordProblem } from "./authShared";
 import {
   CODE_TTL_MS,
   generateNumericCode,
   sendResetCodeEmail,
 } from "./passwordResetEmail";
+import { sendInvitationEmail } from "./invitationEmail";
 
 /**
  * Recuperación de contraseña por código (KAR-100). Flujo PROPIO, no el nativo de
@@ -89,6 +90,20 @@ import {
  * CONDICIÓN DE REVISIÓN: si el CRM deja de ser un sistema cerrado de dos
  * personas, esto pasa a ser un hallazgo real y hay que diferir el envío
  * resolviendo antes cómo transportar el secreto sin que acabe en los registros.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Y DESDE KAR-111 HAY UN SEGUNDO CANAL, ESTE DELIBERADO
+ *
+ * `iniciarAcceso` (más abajo) responde distinto cuando un correo tiene una
+ * INVITACIÓN PENDIENTE. O sea que, además de la fuga por tiempos de arriba, este
+ * archivo expone a propósito un dato concreto: si una dirección tiene una cuenta
+ * creada a la que todavía no se le ha puesto contraseña.
+ *
+ * No es lo mismo que enumerar cuentas: los otros tres casos —sin cuenta, con
+ * contraseña y desactivada— responden exactamente igual, así que probar
+ * direcciones al azar no distingue nada. El razonamiento completo, y por qué la
+ * alternativa era peor, está en la cabecera de `iniciarAcceso` y en el README.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 /**
@@ -300,6 +315,133 @@ export const requestCode = action({
 });
 
 /**
+ * Paso 1 del LOGIN EN DOS PASOS (KAR-111): decide qué se le pide a este correo.
+ *
+ * La pantalla pregunta primero el correo y solo el correo. Con la respuesta de
+ * aquí decide si pedir la contraseña o si mandar a configurar una por primera
+ * vez. Existe porque obligar a alguien recién invitado a pulsar "¿Olvidaste tu
+ * contraseña?" para poner la PRIMERA es mentira, y además le enseña a pinchar
+ * enlaces de recuperación, que es el reflejo que explota el phishing.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LO QUE ESTA ACTION PUEDE ROMPER SI SE TOCA SIN CUIDADO
+ *
+ * Ramificar según el estado del servidor es, por definición, contarle algo a
+ * quien pregunta. Si un correo desconocido se comportara distinto de uno real,
+ * este formulario sería un directorio de quién tiene cuenta en el CRM, y se
+ * llevaría por delante la indistinguibilidad que el resto de este archivo
+ * defiende.
+ *
+ * Lo que lo hace seguro es HACIA DÓNDE CAE LO DESCONOCIDO. Tres de los cuatro
+ * casos responden lo mismo:
+ *
+ *     cuenta CON contraseña      -> "password"
+ *     correo SIN cuenta          -> "password"   <- aquí está el truco
+ *     cuenta DESACTIVADA         -> "password"
+ *     cuenta SIN contraseña      -> "codigo"
+ *
+ * Probar direcciones al azar no distingue nada: sale siempre el mismo campo y,
+ * al enviarlo, el mismo fallo genérico que una contraseña equivocada. Y los tres
+ * casos de "password" salen SIN escribir ni enviar nada, así que tampoco se
+ * distinguen por tiempo.
+ *
+ * RIESGO ACEPTADO, dicho sin adornos: sí queda expuesto que un correo concreto
+ * tenga una invitación pendiente. Es un estado transitorio, de una cuenta en la
+ * que por definición todavía no se puede entrar con contraseña. Preguntar eso no
+ * consume cuota y se puede repetir; NO se añade un cupo para taparlo porque un
+ * cupo que se agota volvería a ser un arma contra la persona invitada, que es la
+ * regla que gobierna este archivo.
+ *
+ * REGLAS AL TOCAR ESTO:
+ *   · `forzarPorDuena` SIEMPRE `false`. Esta action es anónima; permitir forzar
+ *     desde aquí devolvería la capacidad de rotar el código ajeno.
+ *   · La respuesta no lleva motivos, ni tiempos, ni banderas. Solo `paso`.
+ *   · Cualquier error inesperado cae a "password" (ver el catch del final).
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const iniciarAcceso = action({
+  args: { email: v.string() },
+  handler: async (ctx, args): Promise<{ paso: "password" | "codigo" }> => {
+    // Objeto único para las cuatro salidas no reveladoras: así no puede
+    // colarse un campo de más en una de ellas y volverlas distinguibles.
+    const PEDIR_CONTRASENA = { paso: "password" as const };
+
+    try {
+      const email = normalizeEmail(args.email);
+      if (email === "") return PEDIR_CONTRASENA;
+
+      const account = await ctx.runQuery(internal.passwordReset.accountByEmail, {
+        email,
+      });
+      // Sin cuenta, o desactivada, o ya tiene contraseña: se pide contraseña y no
+      // se escribe ni se envía nada.
+      if (account === null) return PEDIR_CONTRASENA;
+      if (!account.active) return PEDIR_CONTRASENA;
+      if (!account.sinContrasena) return PEDIR_CONTRASENA;
+
+      // ── Invitación pendiente ──
+      const code = generateNumericCode();
+      const codeHash = await hashCode(code);
+      const resultado = await ctx.runMutation(
+        internal.passwordReset.prepararEnvio,
+        {
+          accountId: account._id,
+          email,
+          codeHash,
+          expiresAt: Date.now() + INVITE_TTL_MS,
+          attemptsLeft: MAX_VERIFY_ATTEMPTS,
+          forzarPorDuena: false, // NUNCA true: esto es el camino anónimo.
+        },
+      );
+
+      if (resultado.enviar) {
+        try {
+          await sendInvitationEmail(
+            account.providerAccountId,
+            code,
+            account.nombre,
+          );
+        } catch (e) {
+          // El envío falló, pero la respuesta NO cambia: mandarla al campo de
+          // contraseña sería peor, porque no tiene ninguna. La pantalla le
+          // ofrece reintentar.
+          console.error(
+            "[passwordReset] No se pudo enviar la invitación desde iniciarAcceso.",
+            e instanceof Error ? e.message : String(e),
+          );
+          try {
+            await ctx.runMutation(internal.passwordReset.descartarCodigo, {
+              accountId: account._id,
+              codeHash,
+            });
+          } catch (errorAlDescartar) {
+            console.error(
+              "[passwordReset] Además, no se pudo descartar el código guardado.",
+              errorAlDescartar instanceof Error
+                ? errorAlDescartar.message
+                : String(errorAlDescartar),
+            );
+          }
+        }
+      }
+      // Si `enviar` era falso es porque ya hay un código vivo, y eso también es
+      // "codigo": esa persona tiene un código utilizable en el buzón.
+      return { paso: "codigo" as const };
+    } catch (e) {
+      // FAIL-CLOSED, y aquí "cerrado" es "password", que es la rama que no revela
+      // nada. Un pepper mal puesto o Convex a medias no pueden convertirse en una
+      // respuesta distinta que delate a nadie.
+      console.error(
+        "[passwordReset] iniciarAcceso falló; se responde 'password' para no " +
+          "revelar nada.",
+        e instanceof Error ? e.message : String(e),
+      );
+      return PEDIR_CONTRASENA;
+    }
+  },
+});
+
+/**
  * Paso 2 — verificar el código y cambiar la contraseña.
  *
  * No deja la sesión iniciada: es el cliente quien inicia sesión acto seguido con
@@ -427,6 +569,13 @@ export const accountByEmail = internalQuery({
       providerAccountId: account.providerAccountId,
       // Fail-closed, igual que `currentActiveUser`: solo `true` es acceso.
       active: user !== null && user.active === true,
+      // SI EXISTE el secreto, no cuál es. Lo necesita `iniciarAcceso` para
+      // decidir si a esa persona hay que pedirle contraseña o mandarle el código
+      // de invitación. Mismo criterio que `users.listar` en KAR-54.
+      sinContrasena: account.secret === undefined,
+      // Para el saludo del correo de invitación. No es un dato sensible y evita
+      // una segunda consulta desde la action.
+      nombre: user?.name ?? "",
     };
   },
 });
