@@ -4,6 +4,7 @@ import Google from "@auth/core/providers/google";
 import type { WithoutSystemFields } from "convex/server";
 import { query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { DataModel, Doc } from "./_generated/dataModel";
 import { normalizeEmail, validatePassword } from "./authShared";
 import { currentActiveUser } from "./authz";
@@ -89,6 +90,54 @@ const GoogleProvider = Google({
   },
 });
 
+/**
+ * Ventana de supresión del aviso de acceso: como mucho uno cada 24 h por cuenta.
+ *
+ * Ver el porqué en la cabecera de convex/newSignInEmail.ts. En corto: sin señal
+ * de IP ni de dispositivo no se puede distinguir un acceso "nuevo" de la rutina,
+ * y un aviso por cada inicio de sesión se convierte en ruido que se archiva sin
+ * leer.
+ */
+const AVISO_ACCESO_SUPRESION_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Programa el aviso de acceso si toca. Escribe la marca ANTES de programar, para
+ * que dos inicios de sesión simultáneos no manden dos correos: la mutation es
+ * una transacción, así que el segundo ve la marca del primero.
+ */
+async function programarAvisoDeAcceso(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+): Promise<void> {
+  // `users.email` es opcional en el esquema. Sin dirección no hay a quién avisar,
+  // y no es un error: se sale en silencio.
+  const to = user.email;
+  if (!to) return;
+
+  const ahora = Date.now();
+  const fila = await ctx.db
+    .query("signInNotices")
+    .withIndex("by_user", (q) => q.eq("userId", user._id))
+    .unique();
+
+  if (fila !== null && ahora - fila.lastNotifiedAt < AVISO_ACCESO_SUPRESION_MS) {
+    return;
+  }
+  if (fila === null) {
+    await ctx.db.insert("signInNotices", {
+      userId: user._id,
+      lastNotifiedAt: ahora,
+    });
+  } else {
+    await ctx.db.patch(fila._id, { lastNotifiedAt: ahora });
+  }
+
+  await ctx.scheduler.runAfter(0, internal.newSignInEmail.send, {
+    to,
+    at: ahora,
+  });
+}
+
 export const { auth, signIn, signOut, store } = convexAuth({
   providers: [PasswordSignInOnly, GoogleProvider],
   /**
@@ -112,10 +161,29 @@ export const { auth, signIn, signOut, store } = convexAuth({
      * FAIL-CLOSED: cualquier cosa que no sea `active === true` lanza.
      */
     async beforeSessionCreation(ctx, { userId }) {
-      const db = (ctx as unknown as MutationCtx).db;
-      const user = await db.get(userId as Doc<"users">["_id"]);
+      const mutationCtx = ctx as unknown as MutationCtx;
+      const user = await mutationCtx.db.get(userId as Doc<"users">["_id"]);
       if (user === null || user.active !== true) {
         throw new Error("Cuenta sin acceso.");
+      }
+
+      // Aviso de acceso a la titular (auditoría de login, hallazgo A10). Va
+      // DESPUÉS del control de acceso: solo se avisa de sesiones que de verdad
+      // se van a crear.
+      //
+      // Este try/catch NO PUEDE convertirse jamás en un `throw`. Estamos dentro
+      // del único punto que crea sesiones: si el aviso propagara un error, un
+      // fallo de correo dejaría a las dos usuarias sin poder entrar. El aviso es
+      // una red de detección, no un control de acceso, y esa jerarquía tiene que
+      // notarse en el código.
+      try {
+        await programarAvisoDeAcceso(mutationCtx, user);
+      } catch (e) {
+        console.error(
+          "[auth] La sesión SÍ se creó, pero no se pudo programar el aviso de " +
+            "inicio de sesión.",
+          e instanceof Error ? e.message : String(e),
+        );
       }
     },
     /**
