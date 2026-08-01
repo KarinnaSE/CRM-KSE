@@ -101,6 +101,16 @@ export default defineSchema({
     .searchIndex("search_name", { searchField: "name" }),
 
   // ── Interacción / Nota ── qué se habló y por qué canal.
+  //
+  // NOTA SOBRE LOS ÍNDICES `by_author` / `by_createdBy` / `by_assignedTo` /
+  // `by_completedBy` / `by_registeredBy` QUE APARECEN A PARTIR DE AQUÍ (KAR-89):
+  // no los usa ninguna pantalla. Existen para poder responder "¿esta persona
+  // registró algo en el CRM?" antes de dejar que la dueña la elimine, y son las
+  // SEIS referencias `v.id("users")` del modelo (la sexta,
+  // `clients.by_registeredBy`, ya existía). Sin ellos habría que recorrer las
+  // tablas enteras, y esa lectura está en el camino de pintar la lista de
+  // usuarios: Convex corta una query a los 16 384 documentos leídos, así que el
+  // recorrido funcionaría hoy y reventaría en silencio cuando el CRM crezca.
   interactions: defineTable({
     clientId: v.id("clients"),
     text: v.string(),
@@ -111,7 +121,9 @@ export default defineSchema({
     ),
     date: v.number(),
     authorId: v.id("users"),
-  }).index("by_client", ["clientId"]),
+  })
+    .index("by_client", ["clientId"])
+    .index("by_author", ["authorId"]),
 
   // ── Seguimiento ── recordatorio de volver a contactar.
   followups: defineTable({
@@ -130,7 +142,13 @@ export default defineSchema({
     .index("by_client", ["clientId"])
     .index("by_status", ["status"])
     // Range-scan de la pantalla principal: pendientes ordenados por fecha.
-    .index("by_status_dueDate", ["status", "dueDate"]),
+    .index("by_status_dueDate", ["status", "dueDate"])
+    // Rastro de un usuario (ver la nota de `interactions`). Los tres, porque un
+    // seguimiento asignado a alguien, o cerrado por alguien, es rastro suyo
+    // aunque no lo creara él.
+    .index("by_createdBy", ["createdBy"])
+    .index("by_assignedTo", ["assignedTo"])
+    .index("by_completedBy", ["completedBy"]),
 
   // ── Venta ── asociada a un cliente.
   sales: defineTable({
@@ -144,5 +162,7 @@ export default defineSchema({
     amount: v.number(),
     date: v.number(),
     registeredBy: v.id("users"),
-  }).index("by_client", ["clientId"]),
+  })
+    .index("by_client", ["clientId"])
+    .index("by_registeredBy", ["registeredBy"]),
 });

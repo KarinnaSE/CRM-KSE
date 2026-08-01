@@ -156,6 +156,18 @@ export function emailShell({
 }): string {
   return `<!doctype html>
 <html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <!--
+      Los dos correos de este sistema llevan un código de 8 dígitos, y hay
+      clientes (iOS Mail entre otros) que detectan una cadena así como un
+      teléfono y la convierten en un enlace \`tel:\`. Eso, además de quedar raro,
+      se lo entrega a los reescritores de enlaces de los antivirus de correo,
+      que lo envuelven en su propia URL y pueden dejarlo ilegible. Con esto el
+      código se queda como lo que es: texto que hay que copiar.
+    -->
+    <meta name="format-detection" content="telephone=no,date=no,address=no,email=no">
+  </head>
   <body style="margin:0;padding:24px;background:#f5f5f5;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;">
     <div style="max-width:440px;margin:0 auto;background:#ffffff;border-radius:10px;padding:32px;">
       <div style="font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#1c1c1c;">KSE</div>

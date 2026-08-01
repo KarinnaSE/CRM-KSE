@@ -102,8 +102,14 @@ import {
 const QUOTA_MAX = 3;
 const QUOTA_WINDOW_MS = 15 * 60 * 1000;
 
-/** Intentos simultáneos de introducir el código. Se RECARGAN, no se agotan. */
-const MAX_VERIFY_ATTEMPTS = 5;
+/**
+ * Intentos simultáneos de introducir el código. Se RECARGAN, no se agotan.
+ *
+ * Se exporta para que la invitación de convex/users.ts emita códigos con
+ * exactamente el mismo presupuesto de intentos. Duplicar el número allí sería
+ * dejar dos verdades que se separan al primer ajuste.
+ */
+export const MAX_VERIFY_ATTEMPTS = 5;
 
 /**
  * Tiempo en el que se recarga el cupo completo de intentos: 5 por cada 10
@@ -152,8 +158,13 @@ const INVALID_CODE = "El código no es válido o ha caducado.";
  *
  * Se calcula en la ACTION y a las mutations les llega ya el hash: así el código
  * en claro nunca entra en el argumento de una mutation.
+ *
+ * Se exporta para la invitación de convex/users.ts. Es DELIBERADO que ese flujo
+ * reutilice esta función y no tenga la suya: el pepper y su ausencia se tratan
+ * en un solo sitio, y un código de invitación se guarda exactamente igual que
+ * uno de recuperación (de hecho es el mismo, y lo consume el mismo camino).
  */
-async function hashCode(code: string): Promise<string> {
+export async function hashCode(code: string): Promise<string> {
   const pepper = process.env.PASSWORD_RESET_PEPPER;
   if (!pepper) {
     throw new Error(
@@ -242,8 +253,18 @@ export const requestCode = action({
         codeHash,
         expiresAt: Date.now() + CODE_TTL_MS,
         attemptsLeft: MAX_VERIFY_ATTEMPTS,
+        // NUNCA `true` aquí. Este es el camino ANÓNIMO: si desde aquí se pudiera
+        // forzar, cualquiera podría volver a rotar el código de una víctima, que
+        // es el fallo que cerró la ronda anterior. El forzado es exclusivo de
+        // `users.reenviarInvitacion`, con dueña autenticada y sobre cuentas que
+        // aún no tienen contraseña.
+        forzarPorDuena: false,
       },
     );
+    // Del resultado se lee SOLO `enviar`. `motivo` y `expiresAt` existen para la
+    // dueña autenticada y no pueden salir por aquí: esta action devuelve `null`
+    // pase lo que pase, y decir por qué convertiría la pantalla en un oráculo de
+    // qué correos tienen cuenta.
     // Si no toca enviar, el código recién generado se descarta sin más: nunca
     // llegó a guardarse ni a salir de aquí.
     if (!enviar) return null;
@@ -417,6 +438,29 @@ export const accountByEmail = internalQuery({
  *
  * Sustituye a las antiguas `consumeRequestQuota` + `storeCode`, que estaban en
  * mutations distintas y por tanto en transacciones distintas.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SOBRE `forzarPorDuena` (KAR-54). Es la ÚNICA excepción a "un código vivo es
+ * sagrado", y está acotada para que no valga como arma:
+ *
+ *   - Es un argumento OBLIGATORIO, no opcional con valor por defecto. Así cada
+ *     punto de llamada tiene que declarar explícitamente qué es, y añadir uno
+ *     nuevo obliga a pensarlo. `requestCode` —el camino anónimo— pasa `false`.
+ *   - Quien puede ponerlo en `true` es `users.reenviarInvitacion`, que exige
+ *     `requireOwner` y ADEMÁS comprueba que esa cuenta todavía no tiene
+ *     contraseña. O sea que este camino nunca puede destruir el código de
+ *     recuperación de alguien que sí tiene contraseña, que es exactamente el
+ *     caso que la ronda de auditoría protegía. Quien ya tiene contraseña no
+ *     necesita invitación: tiene "¿Olvidaste tu contraseña?".
+ *   - Existe porque el código de invitación dura 24 h (ver INVITE_TTL_MS en
+ *     convex/authShared.ts). Sin él, un correo que se quede en la cuarentena de
+ *     un antivirus dejaría a esa persona un día entero sin poder entrar y sin
+ *     que nadie pudiera hacer nada.
+ *
+ * Y `motivo` en el rechazo: se devuelve para que la DUEÑA pueda leer la verdad
+ * ("ya hay una invitación vigente, caduca a las HH:MM") en vez de un silencio.
+ * OJO: `requestCode` NO lo propaga a nadie; ver su cabecera.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export const prepararEnvio = internalMutation({
   args: {
@@ -425,9 +469,25 @@ export const prepararEnvio = internalMutation({
     codeHash: v.string(),
     expiresAt: v.number(),
     attemptsLeft: v.number(),
+    forzarPorDuena: v.boolean(),
   },
   handler: async (ctx, args) => {
     const ahora = Date.now();
+
+    // 0) GUARDA ATÓMICA DEL FORZADO. `users.reenviarInvitacion` ya comprueba lo
+    //    mismo para dar un mensaje decente, pero lo hace en OTRA transacción.
+    //    Repetirlo aquí es lo que convierte la restricción en una garantía: sea
+    //    quien sea quien llame, y pase lo que pase entre medias, solo se puede
+    //    forzar sobre una cuenta que todavía NO tiene contraseña. Así este
+    //    camino no puede destruir el código de recuperación de alguien que sí la
+    //    tiene, que es el caso que la ronda de auditoría protegía.
+    if (args.forzarPorDuena) {
+      const cuenta = await ctx.db.get(args.accountId);
+      // Fail-closed: si la cuenta no existe o ya tiene secreto, no se fuerza.
+      if (cuenta === null || cuenta.secret !== undefined) {
+        return { enviar: false as const, motivo: "no_forzable" as const };
+      }
+    }
 
     // 1) ¿Hay ya un código para esta cuenta?
     //
@@ -439,27 +499,41 @@ export const prepararEnvio = internalMutation({
       .withIndex("by_account", (q) => q.eq("accountId", args.accountId))
       .collect();
 
+    // Un código sin intentos disponibles también cuenta como vivo: los intentos
+    // se recargan (ver `consumeCode`), así que ese código le sigue sirviendo a
+    // quien conoce el número.
+    const vivo = filas.find((fila) => fila.expiresAt > ahora) ?? null;
+
     // 2) EL ARREGLO. Si alguno sigue vivo, no se toca nada y no se envía nada.
     //
     //    No se rota (la usuaria conserva el código que ya tiene en el buzón) y
     //    NO SE CONSUME CUOTA, que es la otra mitad: si el rechazo gastara cuota,
     //    un atacante seguiría pudiendo vaciarla a base de peticiones y volvería a
     //    dejar sin recuperación a la usuaria, exactamente el fallo que esto cierra.
+    if (vivo !== null && !args.forzarPorDuena) {
+      return {
+        enviar: false as const,
+        motivo: "codigo_vivo" as const,
+        expiresAt: vivo.expiresAt,
+      };
+    }
+
+    // 3) LA CUOTA VA ANTES DE BORRAR NADA, y el orden es la mitad de lo que hace
+    //    que el forzado sea seguro. Al revés —borrar y luego pedir cuota— un
+    //    reenvío forzado con la cuota agotada destruiría el código vivo y no
+    //    podría mandar el sustituto: dejaría a la persona peor que antes, que es
+    //    reintroducir a mano el fallo que arregló la ronda anterior.
     //
-    //    Un código sin intentos disponibles también cuenta como vivo: los
-    //    intentos se recargan (ver `consumeCode`), así que ese código le sigue
-    //    sirviendo a quien conoce el número.
-    if (filas.some((fila) => fila.expiresAt > ahora)) {
-      return { enviar: false as const };
-    }
-
-    // 3) Solo quedaban caducados: fuera.
-    for (const fila of filas) await ctx.db.delete(fila._id);
-
-    // 4) Cuota. Ahora solo la pagan las peticiones que de verdad emiten código.
+    //    Efecto lateral asumido: si la cuota deniega, las filas CADUCADAS se
+    //    quedan sin limpiar hasta la siguiente emisión. Son basura inerte —
+    //    `consumeCode` también borra lo caducado— y no cambia ninguna decisión.
     if (!(await consumirCuota(ctx, args.email, ahora))) {
-      return { enviar: false as const };
+      return { enviar: false as const, motivo: "cuota" as const };
     }
+
+    // 4) Ahora sí: fuera lo que hubiera (caducado siempre; vivo solo si la dueña
+    //    ha forzado y la cuota lo ha permitido).
+    for (const fila of filas) await ctx.db.delete(fila._id);
 
     // 5) Guardar el código nuevo.
     await ctx.db.insert("passwordResetCodes", {

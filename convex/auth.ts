@@ -164,10 +164,51 @@ export const { auth, signIn, signOut, store } = convexAuth({
       if (args.type !== "credentials") {
         throw new Error("Cuenta no autorizada.");
       }
-      return await db.insert(
-        "users",
-        args.profile as WithoutSystemFields<Doc<"users">>,
-      );
+
+      /**
+       * ÚLTIMA LÍNEA DE DEFENSA DE LAS DOS INVARIANTES DEL CONJUNTO DE USUARIOS
+       * (KAR-54 / KAR-89). Están aquí y no (solo) en convex/users.ts por un
+       * motivo concreto: este callback corre DENTRO de la misma transacción que
+       * el `db.insert` de abajo, así que es el único punto donde comprobar y
+       * escribir no se pueden separar. `users.crear` valida antes lo mismo, pero
+       * en otra transacción; entre su comprobación y este insert cabe otra alta.
+       *
+       * Los mensajes NO son para la usuaria: Convex redacta el texto de un
+       * `Error` en producción. El mensaje que se lee lo da `users.crear`.
+       */
+      const perfil = args.profile as WithoutSystemFields<Doc<"users">>;
+
+      // 1) Correo único. No es higiene: el login con Google resuelve el usuario
+      //    con `.withIndex("email").unique()` (arriba, en la rama oauth), y
+      //    `.unique()` LANZA si hay dos filas. Dos usuarios con el mismo correo
+      //    no degradan el login de Google, lo rompen con un error.
+      const correo = normalizeEmail(perfil.email);
+      if (correo !== "") {
+        const existente = await db
+          .query("users")
+          .withIndex("email", (q) => q.eq("email", correo))
+          .first();
+        if (existente !== null) {
+          throw new Error(`Ya existe un usuario con el correo ${correo}.`);
+        }
+      }
+
+      // 2) Una sola dueña. Recorrido completo de `users` y no un índice: la
+      //    tabla tiene un puñado de filas, esto solo corre al CREAR usuarios
+      //    (nunca en un inicio de sesión), y leer la tabla entera mete todas sus
+      //    filas en el read-set de la transacción, que es justo lo que hace que
+      //    dos altas simultáneas con rol dueña no puedan pasar las dos.
+      if (perfil.role === "duena") {
+        const duenaActual = await db
+          .query("users")
+          .filter((q) => q.eq(q.field("role"), "duena"))
+          .first();
+        if (duenaActual !== null) {
+          throw new Error("Ya existe una cuenta con rol dueña.");
+        }
+      }
+
+      return await db.insert("users", perfil);
     },
   },
 });
