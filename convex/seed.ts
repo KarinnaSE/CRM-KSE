@@ -48,6 +48,9 @@ export const clearAll = internalMutation({
       // que dependen por `accountId`.
       "passwordResetCodes",
       "passwordResetRequests",
+      // Aviso de inicio de sesión: depende de `users` por `userId`, así que va
+      // antes que ella o el reseed deja filas huérfanas.
+      "signInNotices",
       "authRateLimits",
       "authVerifiers",
       "authVerificationCodes",

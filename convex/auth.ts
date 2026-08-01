@@ -101,9 +101,23 @@ const GoogleProvider = Google({
 const AVISO_ACCESO_SUPRESION_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Programa el aviso de acceso si toca. Escribe la marca ANTES de programar, para
- * que dos inicios de sesión simultáneos no manden dos correos: la mutation es
- * una transacción, así que el segundo ve la marca del primero.
+ * Programa el aviso de acceso si toca.
+ *
+ * ORDEN: primero se PROGRAMA y después se escribe la marca de supresión.
+ *
+ * Al revés —marca primero— hay un fallo silencioso: si `runAfter` lanza, el
+ * `catch` de quien llama se lo traga, la marca ya escrita queda commiteada con la
+ * transacción, y el aviso se suprime durante 24 h sin que se haya enviado nunca.
+ * O sea, justo el caso en el que más falta hace la alerta es aquel en el que se
+ * pierde sin dejar rastro visible.
+ *
+ * Con este orden el peor caso es un aviso DUPLICADO —programado y sin marca—, que
+ * es infinitamente más benigno que una alerta silenciada.
+ *
+ * Y no debilita la protección contra dos inicios de sesión simultáneos: una
+ * mutation de Convex es una transacción serializable, así que dos ejecuciones que
+ * lean y escriban la misma fila entran en conflicto y una se reintenta, mire
+ * donde mire el orden interno de las operaciones.
  */
 async function programarAvisoDeAcceso(
   ctx: MutationCtx,
@@ -123,6 +137,11 @@ async function programarAvisoDeAcceso(
   if (fila !== null && ahora - fila.lastNotifiedAt < AVISO_ACCESO_SUPRESION_MS) {
     return;
   }
+  await ctx.scheduler.runAfter(0, internal.newSignInEmail.send, {
+    to,
+    at: ahora,
+  });
+
   if (fila === null) {
     await ctx.db.insert("signInNotices", {
       userId: user._id,
@@ -131,11 +150,6 @@ async function programarAvisoDeAcceso(
   } else {
     await ctx.db.patch(fila._id, { lastNotifiedAt: ahora });
   }
-
-  await ctx.scheduler.runAfter(0, internal.newSignInEmail.send, {
-    to,
-    at: ahora,
-  });
 }
 
 export const { auth, signIn, signOut, store } = convexAuth({

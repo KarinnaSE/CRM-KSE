@@ -56,11 +56,13 @@ export default defineSchema({
   // punto donde comprobar una cuota, así que un anónimo podía invalidar sin
   // límite el código que la usuaria legítima acababa de recibir.
 
-  // Código vigente de una cuenta. Como mucho uno: `storeCode` borra los previos.
+  // Código vigente de una cuenta. Como mucho uno, y la invariante ya no es la de
+  // KAR-100: un código VIVO no se rota nunca (esa es la defensa del hallazgo A1);
+  // los caducados se limpian al preparar el envío siguiente. Ver `prepararEnvio`.
   passwordResetCodes: defineTable({
     accountId: v.id("authAccounts"),
     // HMAC-SHA256(código, PASSWORD_RESET_PEPPER). No se guarda el código en
-    // claro, y el pepper evita que 10^6 hashes se precomputen en una tabla.
+    // claro, y el pepper evita que 10^8 hashes se precomputen en una tabla.
     codeHash: v.string(),
     expiresAt: v.number(), // epoch ms
     // Intentos restantes, con RECARGA continua (ver consumeCode). No es un cupo
