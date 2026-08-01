@@ -137,15 +137,12 @@ No es una comprobación contra bases de contraseñas filtradas: eso exigiría un
 
 ### Correos que manda el sistema
 
-Todos van siempre a la dirección **almacenada en la cuenta** (`authAccounts.providerAccountId` o `users.email`), nunca a la que escriba quien rellena el formulario. Ninguno lleva contraseñas, códigos ni enlaces de un solo uso.
+Los dos van siempre a la dirección **almacenada en la cuenta** (`authAccounts.providerAccountId`), nunca a la que escriba quien rellena el formulario. Ninguno lleva contraseñas, códigos ni enlaces de un solo uso.
 
 | Correo | Cuándo | Si falla el envío |
 |---|---|---|
 | Código de recuperación | Al pedir recuperar la contraseña | **Rompe el flujo.** Sin correo no hay nada que hacer con la pantalla del código. |
 | Aviso de cambio de contraseña | Después de cambiarla (recuperación o break-glass) | **No rompe nada.** Ver abajo. |
-| Aviso de inicio de sesión | Al crear sesión, **como mucho uno cada 24 h por cuenta** | **No rompe nada.** Un fallo de correo jamás puede impedir entrar. |
-
-**Por qué el aviso de acceso está limitado a uno al día.** Convex no expone IP ni dispositivo en una mutation, así que no hay forma de distinguir un acceso «nuevo» de la rutina diaria. Sin ese límite saldrían varios correos al día, y un correo de seguridad que llega a diario se archiva sin leer: el aviso dejaría de detectar justo cuando hiciera falta. Con el tope se conserva casi toda la capacidad de detección —el acceso de un intruso dispara aviso salvo que la titular ya hubiera entrado ese mismo día— a cambio de un volumen que sí se lee. La marca vive en la tabla `signInNotices`.
 
 **El aviso de cambio es best-effort, a conciencia.** No se envía en línea: se programa con `ctx.scheduler.runAfter(0, …)` y se manda en otro trabajo. El motivo es que ese correo nunca puede hacer fracasar un cambio de contraseña, y eso son dos cosas distintas: no propagar el error (basta un `try/catch`) y no gastar el tiempo de la función que lo llama (no basta). Si Resend se quedara pendiente y el runtime abortara la ejecución, no habría `catch` que corriera, y la pantalla de login traduce cualquier error a "El código no es válido o ha caducado" — con la contraseña ya cambiada y las sesiones ya cerradas.
 
@@ -190,6 +187,8 @@ No se puede sortear desde la aplicación: el tipo de la opción es cerrado (`"lo
 *Por qué no se arregla:* el arreglo natural —diferir el envío con `ctx.scheduler`— obligaría a pasar el código **en claro** como argumento de una función programada, y los argumentos aparecen en los registros del deployment. Guardarlo en una fila intermedia contradice el diseño HMAC+pepper, que existe justamente para que leer la tabla no dé códigos usables. Las dos salidas cambian una fuga menor por una mayor. Y el impacto aquí es nulo: hay dos cuentas y **sus correos están publicados en este mismo repositorio** (`convex/seed.ts` y la caja de credenciales demo del login). *Condición de revisión:* si el CRM deja de ser un sistema cerrado de dos personas, esto pasa a ser un hallazgo real.
 
 **Que el login no sea un oráculo depende de que Convex redacte los mensajes de error en producción.** `retrieveAccount` lanza `InvalidAccountId`, `InvalidSecret` o `TooManyFailedAttempts` —tres mensajes distinguibles— y el proxy de Convex Auth los reenvía al navegador tal cual. La suposición está documentada en `lib/errores.ts`, pero es una garantía de la plataforma, externa e invisible en el código, de la que depende una propiedad de seguridad. **Pendiente de comprobar contra producción**; si no se redactara, la pantalla de login tendría que dejar de depender de ello.
+
+**No hay aviso por correo de los inicios de sesión.** Se implementó y se retiró por decisión de producto: los correos resultaban molestos. Consecuencia a tener presente: no queda ninguna señal que delate un acceso hecho con **credenciales válidas** —contraseña filtrada o buzón comprometido—. Lo que sí sigue avisando es el cambio de contraseña, así que un intruso que además cambie el secreto deja rastro; uno que solo entre y mire, no.
 
 **Tres advisories altos de dependencias transitivas de Next 15.** No son explotables aquí: los de PostCSS son de compilación y todo el CSS es nuestro; los de sharp solo se alcanzan por `/_next/image`, que responde 400 a cualquier petición; y no usamos `next/image`, Server Actions ni rewrites. Cerrarlos exige subir a Next 16, un salto de versión mayor que merece su propia tarea.
 
