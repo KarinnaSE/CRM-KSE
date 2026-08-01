@@ -524,6 +524,40 @@ export const crear = action({
       profile: { name: nombre, email, role: args.role, active: true },
     });
 
+    /**
+     * COMPROBACIÓN DE QUE ESTA ALTA CREÓ ALGO DE VERDAD.
+     *
+     * `createAccount` NO lanza si ya existía una cuenta con ese id y no se le
+     * pasa secreto: devuelve la existente como si acabara de crearla. El
+     * precheck de `contextoAlta` cubre el caso normal, pero corre en otra
+     * transacción, así que dos altas simultáneas lo pasan las dos.
+     *
+     * No es teoría: medido con 6 altas a la vez con el mismo correo, CINCO
+     * respondían "creado" con el mismo `userId` y solo se creaba un usuario. La
+     * base de datos quedaba bien, pero la respuesta mentía.
+     *
+     * Lo único que se puede comprobar después es si la cuenta que ahora existe
+     * es EXACTAMENTE la que se pidió:
+     *
+     *   - Si lo es, el alta es idempotente y decir que salió bien es cierto.
+     *     Es el caso real: doble clic en "Agregar usuario".
+     *   - Si no lo es, esa cuenta es de otra persona (o estaba desactivada) y
+     *     hay que decirlo, con el mismo mensaje que habría dado el precheck.
+     *
+     * Ojo al tocar esto: NO se puede usar `_creationTime` para distinguir quién
+     * ganó la carrera. En una carrera real la fila la crea el ganador a
+     * milisegundos del `Date.now()` del perdedor, así que la comparación de
+     * tiempos daría lo contrario de lo que parece.
+     */
+    if (
+      user.email !== email ||
+      user.name !== nombre ||
+      user.role !== args.role ||
+      user.active !== true
+    ) {
+      throw new ConvexError("Ya hay una cuenta de acceso con ese correo.");
+    }
+
     const invitacion = await enviarInvitacion(ctx, {
       accountId: account._id,
       destino: account.providerAccountId,
@@ -617,8 +651,10 @@ export const reenviarInvitacion = action({
 /**
  * Cambia nombre, correo y/o rol. Solo se tocan los campos que llegan.
  *
- * EL CAMBIO DE CORREO ARRASTRA CUATRO CONSECUENCIAS, y las cuatro ocurren en
- * esta misma transacción. Ver el bloque de abajo, que es la parte con más
+ * EL CAMBIO DE CORREO ARRASTRA CINCO CONSECUENCIAS, y las cinco ocurren en esta
+ * misma transacción: la cuota del correo viejo, el renombrado de la cuenta
+ * Password, el borrado de los códigos pendientes, la desvinculación de Google y
+ * el corte de sesiones. Ver el bloque de abajo, que es la parte con más
  * seguridad dentro de esta función.
  */
 export const actualizar = mutation({

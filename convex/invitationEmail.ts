@@ -75,7 +75,11 @@ export function buildInvitationEmail({
   urlLogin: string | null;
 }): EmailContent {
   const horas = Math.round(INVITE_TTL_MS / 3_600_000);
-  const saludo = nombre.trim() === "" ? "Hola" : `Hola, ${nombre.trim()}`;
+  // Se colapsan los espacios además de recortarlos: `users.crear` ya normaliza
+  // el nombre, pero esta función es pura y la puede llamar cualquiera, y un dato
+  // histórico con espacios repetidos quedaría feo en el saludo.
+  const limpio = nombre.trim().replace(/\s+/g, " ");
+  const saludo = limpio === "" ? "Hola" : `Hola, ${limpio}`;
 
   // El enlace es PLANO y opcional: si `SITE_URL` no supera la validación de
   // convex/email.ts, el correo sale sin enlace y con las instrucciones igual de
