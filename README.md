@@ -95,7 +95,15 @@ npm run check:prod-env
 
 Falla si el deployment de producción tiene alguna variable peligrosa: `ALLOW_DEMO_SEED`, `LOG_OTP_CODES`, `AUTH_LOG_LEVEL=DEBUG` o `AUTH_LOG_SECRETS=true`. Es fail-closed — si no puede leer el entorno, también falla. Un aviso en un README no impide un despiste; esto sí.
 
-Funciona en las dos situaciones sin que haya que acordarse de nada: en una máquina de desarrollo usa `--prod`, y cuando detecta `CONVEX_DEPLOY_KEY` (o sea, en CI) lo omite, porque esa clave ya está ligada a un deployment concreto. **Todavía no está conectado al build de Railway**: un gate mal cableado bloquea *todos* los despliegues, incluidos los que arreglan algo urgente, así que el cableado espera a comprobarse contra un deploy real.
+Funciona en las dos situaciones sin que haya que acordarse de nada: en una máquina de desarrollo usa `--prod`, y cuando detecta `CONVEX_DEPLOY_KEY` (o sea, en CI) lo omite, porque esa clave ya está ligada a un deployment concreto. Ese condicional es cosmético, no funcional — comprobado en el código del CLI: con una deploy key de deployment, `--prod` no da error, solo se ignora con un aviso. Omitirlo evita el ruido.
+
+**Está conectado al build de Railway** (`railway.json`), delante de `convex deploy`:
+
+```
+npm run check:prod-env && npx convex deploy --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL --cmd 'npm run build'
+```
+
+Consecuencia que hay que entender antes de tocarlo: **si el gate falla, el build falla y no se despliega nada**. Eso es exactamente lo que se busca —incluye el caso de que no pueda leer el entorno, porque es fail-closed—, pero significa que un gate roto bloquea también los despliegues urgentes. Producción sigue sirviendo la versión anterior mientras tanto, así que la salida siempre es revertir el commit del gate y volver a desplegar.
 
 Qué hace peligrosa a cada una:
 
