@@ -4,7 +4,6 @@ import Google from "@auth/core/providers/google";
 import type { WithoutSystemFields } from "convex/server";
 import { query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
-import { internal } from "./_generated/api";
 import type { DataModel, Doc } from "./_generated/dataModel";
 import { normalizeEmail, validatePassword } from "./authShared";
 import { currentActiveUser } from "./authz";
@@ -90,68 +89,6 @@ const GoogleProvider = Google({
   },
 });
 
-/**
- * Ventana de supresión del aviso de acceso: como mucho uno cada 24 h por cuenta.
- *
- * Ver el porqué en la cabecera de convex/newSignInEmail.ts. En corto: sin señal
- * de IP ni de dispositivo no se puede distinguir un acceso "nuevo" de la rutina,
- * y un aviso por cada inicio de sesión se convierte en ruido que se archiva sin
- * leer.
- */
-const AVISO_ACCESO_SUPRESION_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Programa el aviso de acceso si toca.
- *
- * ORDEN: primero se PROGRAMA y después se escribe la marca de supresión.
- *
- * Al revés —marca primero— hay un fallo silencioso: si `runAfter` lanza, el
- * `catch` de quien llama se lo traga, la marca ya escrita queda commiteada con la
- * transacción, y el aviso se suprime durante 24 h sin que se haya enviado nunca.
- * O sea, justo el caso en el que más falta hace la alerta es aquel en el que se
- * pierde sin dejar rastro visible.
- *
- * Con este orden el peor caso es un aviso DUPLICADO —programado y sin marca—, que
- * es infinitamente más benigno que una alerta silenciada.
- *
- * Y no debilita la protección contra dos inicios de sesión simultáneos: una
- * mutation de Convex es una transacción serializable, así que dos ejecuciones que
- * lean y escriban la misma fila entran en conflicto y una se reintenta, mire
- * donde mire el orden interno de las operaciones.
- */
-async function programarAvisoDeAcceso(
-  ctx: MutationCtx,
-  user: Doc<"users">,
-): Promise<void> {
-  // `users.email` es opcional en el esquema. Sin dirección no hay a quién avisar,
-  // y no es un error: se sale en silencio.
-  const to = user.email;
-  if (!to) return;
-
-  const ahora = Date.now();
-  const fila = await ctx.db
-    .query("signInNotices")
-    .withIndex("by_user", (q) => q.eq("userId", user._id))
-    .unique();
-
-  if (fila !== null && ahora - fila.lastNotifiedAt < AVISO_ACCESO_SUPRESION_MS) {
-    return;
-  }
-  await ctx.scheduler.runAfter(0, internal.newSignInEmail.send, {
-    to,
-    at: ahora,
-  });
-
-  if (fila === null) {
-    await ctx.db.insert("signInNotices", {
-      userId: user._id,
-      lastNotifiedAt: ahora,
-    });
-  } else {
-    await ctx.db.patch(fila._id, { lastNotifiedAt: ahora });
-  }
-}
-
 export const { auth, signIn, signOut, store } = convexAuth({
   providers: [PasswordSignInOnly, GoogleProvider],
   /**
@@ -175,29 +112,10 @@ export const { auth, signIn, signOut, store } = convexAuth({
      * FAIL-CLOSED: cualquier cosa que no sea `active === true` lanza.
      */
     async beforeSessionCreation(ctx, { userId }) {
-      const mutationCtx = ctx as unknown as MutationCtx;
-      const user = await mutationCtx.db.get(userId as Doc<"users">["_id"]);
+      const db = (ctx as unknown as MutationCtx).db;
+      const user = await db.get(userId as Doc<"users">["_id"]);
       if (user === null || user.active !== true) {
         throw new Error("Cuenta sin acceso.");
-      }
-
-      // Aviso de acceso a la titular (auditoría de login, hallazgo A10). Va
-      // DESPUÉS del control de acceso: solo se avisa de sesiones que de verdad
-      // se van a crear.
-      //
-      // Este try/catch NO PUEDE convertirse jamás en un `throw`. Estamos dentro
-      // del único punto que crea sesiones: si el aviso propagara un error, un
-      // fallo de correo dejaría a las dos usuarias sin poder entrar. El aviso es
-      // una red de detección, no un control de acceso, y esa jerarquía tiene que
-      // notarse en el código.
-      try {
-        await programarAvisoDeAcceso(mutationCtx, user);
-      } catch (e) {
-        console.error(
-          "[auth] La sesión SÍ se creó, pero no se pudo programar el aviso de " +
-            "inicio de sesión.",
-          e instanceof Error ? e.message : String(e),
-        );
       }
     },
     /**

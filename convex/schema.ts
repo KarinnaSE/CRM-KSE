@@ -86,19 +86,6 @@ export default defineSchema({
     count: v.number(),
   }).index("by_email", ["email"]),
 
-  // ── Aviso de inicio de sesión (auditoría de login, hallazgo A10) ──
-  // Última vez que se avisó a cada persona de un acceso a su cuenta. Existe solo
-  // para SUPRIMIR avisos repetidos: sin señal de IP ni de dispositivo —Convex no
-  // las expone en una mutation— un aviso "de acceso nuevo" degenera en un aviso
-  // de TODOS los accesos, y varios correos al día enseñan a ignorarlos, que es lo
-  // contrario de lo que se busca. Con un tope de uno cada 24 h, el acceso de un
-  // intruso sigue disparando aviso salvo que la titular ya hubiera entrado ese
-  // mismo día.
-  signInNotices: defineTable({
-    userId: v.id("users"),
-    lastNotifiedAt: v.number(), // epoch ms
-  }).index("by_user", ["userId"]),
-
   // ── Cliente ── dato central del CRM.
   clients: defineTable({
     name: v.string(),
