@@ -63,7 +63,16 @@ export default defineSchema({
     // claro, y el pepper evita que 10^6 hashes se precomputen en una tabla.
     codeHash: v.string(),
     expiresAt: v.number(), // epoch ms
+    // Intentos restantes, con RECARGA continua (ver consumeCode). No es un cupo
+    // que se agota: un cupo agotable es algo que un atacante puede vaciar para
+    // dejar sin recuperación a la usuaria legítima.
     attemptsLeft: v.number(),
+    // Momento del último intento, para calcular la recarga. OPCIONAL a propósito:
+    // añadirlo como obligatorio dejaría fuera del esquema las filas que ya
+    // existan en el deployment y el push fallaría. Cuando falta se usa
+    // `_creationTime`, que Convex pone en todos los documentos, así que no hace
+    // falta migración ninguna.
+    lastAttemptTime: v.optional(v.number()), // epoch ms
   }).index("by_account", ["accountId"]),
 
   // Cuota de solicitudes por correo, en ventana fija. Solo se escribe fila para

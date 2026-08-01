@@ -6,6 +6,8 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import {
+  CODE_LENGTH,
+  CODE_TTL_MS,
   PASSWORD_RULE_TEXT,
   normalizeEmail,
   passwordProblem,
@@ -39,7 +41,11 @@ export default function LoginPage() {
 /** Pasos de la pantalla. "signIn" es el estado por defecto. */
 type Mode = "signIn" | "requestCode" | "enterCode";
 
-const CODE_LENGTH = 6;
+// `CODE_LENGTH` y `CODE_TTL_MS` se IMPORTAN de convex/authShared.ts. Antes esta
+// pantalla declaraba su propio `const CODE_LENGTH = 6`, así que al cambiar la
+// longitud en el backend la validación de aquí seguía exigiendo 6 y rechazaba
+// códigos correctos, sin que fallara el build ni los tipos.
+const CADUCIDAD_MINUTOS = Math.round(CODE_TTL_MS / 60000);
 
 function LoginInner() {
   const router = useRouter();
@@ -165,7 +171,7 @@ function LoginInner() {
     setNotice(
       isResend
         ? `Te hemos enviado un código nuevo. El anterior ya no es válido.`
-        : `Te hemos enviado un código de ${CODE_LENGTH} dígitos a tu correo. Caduca en 15 minutos.`,
+        : `Te hemos enviado un código de ${CODE_LENGTH} dígitos a tu correo. Caduca en ${CADUCIDAD_MINUTOS} minutos.`,
     );
   }
 
@@ -580,7 +586,7 @@ function LoginInner() {
                     setError(null);
                   }}
                   disabled={busy}
-                  placeholder="000000"
+                  placeholder={"0".repeat(CODE_LENGTH)}
                   className="h-10 rounded-md border border-border bg-surface px-3 text-center text-lg tracking-[0.3em] text-text-primary outline-none placeholder:tracking-[0.3em] placeholder:text-text-tertiary focus:border-interactive focus:ring-2 focus:ring-focus-ring disabled:opacity-60"
                 />
               </div>

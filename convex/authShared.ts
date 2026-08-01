@@ -19,6 +19,28 @@ export function normalizeEmail(email: unknown): string {
   return typeof email === "string" ? email.trim().toLowerCase() : "";
 }
 
+/**
+ * Forma del código de recuperación. Vive AQUÍ, y no en convex/passwordResetEmail.ts,
+ * porque la pantalla de login también necesita la longitud para validar el campo
+ * antes de llamar al backend — y ese archivo importa `./email`, que habla con
+ * Resend: arrastrarlo al bundle del cliente sería meter el transporte de correo
+ * en el navegador. Este módulo es puro y no importa nada.
+ *
+ * Antes la pantalla declaraba su PROPIO `const CODE_LENGTH = 6`. Con dos copias,
+ * cambiar la longitud en el backend dejaba la validación de la UI rechazando
+ * códigos correctos, sin que fallara ni el build ni los tipos.
+ *
+ * 8 dígitos, no 6 (auditoría de login, hallazgo A3). Con 10^6 códigos posibles y
+ * un contador de intentos que se recarga, un atacante paciente acumula ~720
+ * intentos al día: alrededor de un 2 % de éxito al mes. Con 10^8 eso baja al
+ * 0,02 %. Se amplía el espacio en vez de recortar intentos A PROPÓSITO, porque
+ * un cupo de intentos que se agota es algo que el atacante puede vaciar para
+ * dejar a la usuaria sin recuperación — que es justo el agujero que cierra esta
+ * ronda. Ver el razonamiento completo en convex/passwordReset.ts.
+ */
+export const CODE_LENGTH = 8;
+export const CODE_TTL_MS = 15 * 60 * 1000; // 15 minutos
+
 /** Política de contraseñas del CRM. El máximo acota el coste de Scrypt. */
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_LENGTH = 128;

@@ -15,9 +15,13 @@
  */
 
 import { emailShell, sendEmail, type EmailContent } from "./email";
+import { CODE_LENGTH, CODE_TTL_MS } from "./authShared";
 
-export const CODE_LENGTH = 6;
-export const CODE_TTL_MS = 15 * 60 * 1000; // 15 minutos
+// La forma del código se define en convex/authShared.ts, que es puro y lo puede
+// importar también la pantalla de login (este archivo no: arrastra `./email`, y
+// con él el transporte de Resend, al bundle del cliente). Se reexporta para no
+// cambiar los imports de convex/passwordReset.ts.
+export { CODE_LENGTH, CODE_TTL_MS };
 
 /**
  * Código numérico de `CODE_LENGTH` dígitos, criptográficamente seguro.
