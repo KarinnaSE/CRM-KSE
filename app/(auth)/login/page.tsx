@@ -21,7 +21,8 @@ import { Button } from "@/components/ui/Button";
  *
  * Inicio de sesión con email + contraseña y con Google (KAR-94). El registro
  * está deshabilitado (backend + UI). Credenciales demo (solo dev):
- * karinnase@gmail.com / Marta2026, karinnaserrano111@gmail.com / Carlos2026.
+ * karinnase@gmail.com / Seguimiento7Azul,
+ * karinnaserrano111@gmail.com / Propuesta4Verde.
  *
  * Incluye la recuperación de contraseña por código (KAR-96, rehecha en KAR-100)
  * como pasos DENTRO de esta misma pantalla (no hay ruta nueva): pedir código →
@@ -126,8 +127,14 @@ function LoginInner() {
   }
 
   /**
-   * Paso 1 — pedir el código: `passwordReset.requestCode` genera el código, lo
-   * guarda con caducidad y lo envía por correo, con cuota por correo.
+   * Paso 1 — pedir el código: `passwordReset.requestCode` emite un código, lo
+   * guarda con caducidad y lo envía por correo.
+   *
+   * "Emite" y no "genera siempre": si la cuenta ya tiene un código vivo, el
+   * backend NO lo rota ni manda otro, y el que la usuaria tiene en el buzón sigue
+   * sirviendo. Eso es lo que impide que un desconocido invalide sin parar el
+   * código ajeno (hallazgo A1, ver convex/passwordReset.ts). Desde aquí el caso
+   * es indistinguible de un envío, y así debe seguir.
    *
    * A PROPÓSITO el resultado es indistinguible: se avanza al paso del código y se
    * muestra el mismo mensaje aunque el correo no exista, no tenga contraseña
@@ -163,14 +170,23 @@ function LoginInner() {
       );
     }
     setResetLoading(false);
-    // Cada petición invalida el código anterior, así que se limpia el campo para
-    // que no quede a la vista un código que ya no sirve.
+    // Se limpia el campo por higiene, no porque el código anterior haya dejado de
+    // servir: desde el arreglo del hallazgo A1 una petición nueva ya NO invalida
+    // un código vivo.
     setCode("");
     if (!isResend) setNewPassword("");
     setMode("enterCode");
     setNotice(
       isResend
-        ? `Te hemos enviado un código nuevo. El anterior ya no es válido.`
+        ? // Este mensaje decía "El anterior ya no es válido", y desde el arreglo
+          // de A1 eso es FALSO: si el código anterior sigue vivo, es justo el que
+          // hay que usar, porque no se emite otro. Decirle a alguien que tire un
+          // código que funciona es peor que no decirle nada.
+          //
+          // La redacción de ahora es cierta en los dos casos —haya código nuevo o
+          // siga valiendo el viejo— y no filtra nada: habla del buzón de quien
+          // pregunta, no de si la cuenta existe.
+          `Revisa tu correo. Si ya tenías un código sin usar, sigue siendo válido.`
         : `Te hemos enviado un código de ${CODE_LENGTH} dígitos a tu correo. Caduca en ${CADUCIDAD_MINUTOS} minutos.`,
     );
   }
@@ -471,13 +487,13 @@ function LoginInner() {
                       <strong className="font-semibold text-text-primary">
                         Marta:
                       </strong>{" "}
-                      karinnase@gmail.com / Marta2026
+                      karinnase@gmail.com / Seguimiento7Azul
                     </p>
                     <p>
                       <strong className="font-semibold text-text-primary">
                         Carlos:
                       </strong>{" "}
-                      karinnaserrano111@gmail.com / Carlos2026
+                      karinnaserrano111@gmail.com / Propuesta4Verde
                     </p>
                   </div>
                 </div>
