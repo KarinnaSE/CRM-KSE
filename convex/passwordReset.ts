@@ -219,10 +219,16 @@ export const requestCode = action({
     if (email === "") return null;
 
     // 2) ¿Existe la cuenta, y tiene acceso? Si no, salir sin escribir nada.
+    //
+    // El chequeo de `active` es del hallazgo A8: una cuenta desactivada podía
+    // recibir código, cambiar contraseña y disparar correos, todo para nada,
+    // porque `beforeSessionCreation` le corta el paso al entrar. No es escalada,
+    // es trabajo y ruido que no debería existir. Y no filtra: esta acción
+    // devuelve `null` en todos los casos.
     const account = await ctx.runQuery(internal.passwordReset.accountByEmail, {
       email,
     });
-    if (account === null) return null;
+    if (account === null || !account.active) return null;
 
     // 3) Decidir y guardar, en una sola transacción. `prepararEnvio` es quien
     //    aplica la regla del código sagrado y la cuota; aquí no se decide nada.
@@ -302,8 +308,13 @@ export const resetPassword = action({
     const account = await ctx.runQuery(internal.passwordReset.accountByEmail, {
       email,
     });
-    // Un correo sin cuenta responde EXACTAMENTE lo mismo que un código malo.
-    if (account === null) throw new ConvexError(INVALID_CODE);
+    // Un correo sin cuenta —o de una cuenta sin acceso (A8)— responde EXACTAMENTE
+    // lo mismo que un código malo. El mensaje opaco es obligatorio aquí: uno
+    // propio del tipo "esta cuenta está desactivada" convertiría la pantalla en un
+    // oráculo del estado de las cuentas.
+    if (account === null || !account.active) {
+      throw new ConvexError(INVALID_CODE);
+    }
 
     const resultado = await ctx.runMutation(
       internal.passwordReset.consumeCode,
@@ -367,7 +378,16 @@ export const resetPassword = action({
 
 /* ─────────────────────── Funciones internas ─────────────────────── */
 
-/** Cuenta Password de un correo ya normalizado, o `null`. */
+/**
+ * Cuenta Password de un correo ya normalizado, o `null`.
+ *
+ * Devuelve también si la persona tiene acceso (`active`), porque quien llama lo
+ * necesita para no trabajar sobre cuentas desactivadas (hallazgo A8). Se expone
+ * el dato y NO se decide aquí: la puerta de emergencia
+ * (`provisionUsers:resetUserPassword`) sí debe poder operar sobre una cuenta
+ * desactivada — puede formar parte de reactivarla—, mientras que el flujo público
+ * de recuperación no.
+ */
 export const accountByEmail = internalQuery({
   args: { email: v.string() },
   handler: async (ctx, { email }) => {
@@ -378,11 +398,14 @@ export const accountByEmail = internalQuery({
       )
       .unique();
     if (account === null) return null;
+    const user = await ctx.db.get(account.userId);
     // Se devuelve solo lo necesario: nunca el `secret` de la cuenta.
     return {
       _id: account._id,
       userId: account.userId,
       providerAccountId: account.providerAccountId,
+      // Fail-closed, igual que `currentActiveUser`: solo `true` es acceso.
+      active: user !== null && user.active === true,
     };
   },
 });

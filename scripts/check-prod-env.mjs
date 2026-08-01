@@ -48,9 +48,26 @@ const VALORES_PROHIBIDOS = {
   },
 };
 
+/**
+ * Cómo se apunta al deployment de producción, que depende de dónde corre esto.
+ *
+ * - En una máquina de desarrollo hace falta `--prod`, porque el CLI apunta por
+ *   defecto al deployment de desarrollo.
+ * - En CI (Railway) la autenticación llega por `CONVEX_DEPLOY_KEY`, que YA está
+ *   ligada a un deployment concreto. Ahí `--prod` sobra y, según la versión del
+ *   CLI, puede además chocar con la clave.
+ *
+ * Se decide por la presencia de la variable y NO por un flag manual, para que
+ * nadie tenga que acordarse de nada al conectar esto a un pipeline.
+ */
+const conClaveDeDespliegue = Boolean(process.env.CONVEX_DEPLOY_KEY);
+const argumentos = conClaveDeDespliegue
+  ? ["convex", "env", "list"]
+  : ["convex", "env", "list", "--prod"];
+
 let salida;
 try {
-  salida = execFileSync("npx", ["convex", "env", "list", "--prod"], {
+  salida = execFileSync("npx", argumentos, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });

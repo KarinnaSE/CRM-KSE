@@ -170,8 +170,67 @@ async function renameUserEmail(
     await ctx.db.patch(oldAccount._id, { providerAccountId: newEmail });
   }
 
+  // OJO — ESTO NO DESVINCULA GOOGLE, y es deliberado (auditoría de login, A9).
+  //
+  // Tras el primer inicio de sesión con Google, la vinculación deja de depender
+  // del correo: vive en `authAccounts` con `providerAccountId` = el `sub` de
+  // Google, y `createOrUpdateUser` (convex/auth.ts) cortocircuita con
+  // `existingUserId` ANTES de volver a mirar el correo. O sea que cambiarle aquí
+  // el correo a alguien NO le quita el acceso por Google.
+  //
+  // Hoy no es explotable —dos usuarias, migración interna—, pero en cuanto exista
+  // gestión de usuarios (KAR-54) sí lo será: quitar a alguien cambiándole el
+  // correo lo dejaría entrando igual. Para el caso que haga falta antes de eso
+  // está `unlinkGoogleAccount`, abajo. Automatizarlo desde aquí es alcance de
+  // KAR-54, no de una función de migración.
   return { userId: user._id, email: newEmail, emailPatched, accountRenamed };
 }
+
+/**
+ * Desvincula la cuenta de Google de una persona (auditoría de login, A9).
+ *
+ * Borra las filas `authAccounts` del proveedor `google` de ese usuario, de modo
+ * que el siguiente "Continuar con Google" vuelva a pasar por la política de
+ * `createOrUpdateUser`: correo verificado que corresponda a un usuario
+ * provisionado. Si ya no corresponde, no entra.
+ *
+ * NO toca `users` ni la cuenta Password: no es una baja, es cortar UN método de
+ * acceso. Para quitarle el acceso del todo hay que desactivar la cuenta
+ * (`active: false`), que es lo que corta en `beforeSessionCreation`.
+ *
+ * Ejecutar:
+ *   npx convex run provisionUsers:unlinkGoogleAccount --prod '{"email":"…"}'
+ */
+export const unlinkGoogleAccount = internalMutation({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    const email = normalizeEmail(args.email);
+    const user = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", email))
+      .unique();
+    if (user === null) {
+      throw new Error(`No existe ningún usuario con el correo ${email}.`);
+    }
+
+    // Por usuario y proveedor: nunca un barrido de `authAccounts`.
+    const cuentas = await ctx.db
+      .query("authAccounts")
+      .withIndex("userIdAndProvider", (q) =>
+        q.eq("userId", user._id).eq("provider", "google"),
+      )
+      .collect();
+    for (const cuenta of cuentas) await ctx.db.delete(cuenta._id);
+
+    return {
+      email,
+      desvinculadas: cuentas.length,
+      note:
+        "Google desvinculado. La cuenta Password y las sesiones abiertas NO se " +
+        "han tocado: para cortar el acceso del todo, desactiva la cuenta.",
+    };
+  },
+});
 
 /**
  * Migración de la DUEÑA a `karinnase@gmail.com` (KAR-94).
