@@ -6,6 +6,8 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import {
+  CODE_LENGTH,
+  CODE_TTL_MS,
   PASSWORD_RULE_TEXT,
   normalizeEmail,
   passwordProblem,
@@ -19,7 +21,8 @@ import { Button } from "@/components/ui/Button";
  *
  * Inicio de sesión con email + contraseña y con Google (KAR-94). El registro
  * está deshabilitado (backend + UI). Credenciales demo (solo dev):
- * karinnase@gmail.com / Marta2026, karinnaserrano111@gmail.com / Carlos2026.
+ * karinnase@gmail.com / Seguimiento7Azul,
+ * karinnaserrano111@gmail.com / Propuesta4Verde.
  *
  * Incluye la recuperación de contraseña por código (KAR-96, rehecha en KAR-100)
  * como pasos DENTRO de esta misma pantalla (no hay ruta nueva): pedir código →
@@ -39,7 +42,11 @@ export default function LoginPage() {
 /** Pasos de la pantalla. "signIn" es el estado por defecto. */
 type Mode = "signIn" | "requestCode" | "enterCode";
 
-const CODE_LENGTH = 6;
+// `CODE_LENGTH` y `CODE_TTL_MS` se IMPORTAN de convex/authShared.ts. Antes esta
+// pantalla declaraba su propio `const CODE_LENGTH = 6`, así que al cambiar la
+// longitud en el backend la validación de aquí seguía exigiendo 6 y rechazaba
+// códigos correctos, sin que fallara el build ni los tipos.
+const CADUCIDAD_MINUTOS = Math.round(CODE_TTL_MS / 60000);
 
 function LoginInner() {
   const router = useRouter();
@@ -120,8 +127,14 @@ function LoginInner() {
   }
 
   /**
-   * Paso 1 — pedir el código: `passwordReset.requestCode` genera el código, lo
-   * guarda con caducidad y lo envía por correo, con cuota por correo.
+   * Paso 1 — pedir el código: `passwordReset.requestCode` emite un código, lo
+   * guarda con caducidad y lo envía por correo.
+   *
+   * "Emite" y no "genera siempre": si la cuenta ya tiene un código vivo, el
+   * backend NO lo rota ni manda otro, y el que la usuaria tiene en el buzón sigue
+   * sirviendo. Eso es lo que impide que un desconocido invalide sin parar el
+   * código ajeno (hallazgo A1, ver convex/passwordReset.ts). Desde aquí el caso
+   * es indistinguible de un envío, y así debe seguir.
    *
    * A PROPÓSITO el resultado es indistinguible: se avanza al paso del código y se
    * muestra el mismo mensaje aunque el correo no exista, no tenga contraseña
@@ -157,15 +170,24 @@ function LoginInner() {
       );
     }
     setResetLoading(false);
-    // Cada petición invalida el código anterior, así que se limpia el campo para
-    // que no quede a la vista un código que ya no sirve.
+    // Se limpia el campo por higiene, no porque el código anterior haya dejado de
+    // servir: desde el arreglo del hallazgo A1 una petición nueva ya NO invalida
+    // un código vivo.
     setCode("");
     if (!isResend) setNewPassword("");
     setMode("enterCode");
     setNotice(
       isResend
-        ? `Te hemos enviado un código nuevo. El anterior ya no es válido.`
-        : `Te hemos enviado un código de ${CODE_LENGTH} dígitos a tu correo. Caduca en 15 minutos.`,
+        ? // Este mensaje decía "El anterior ya no es válido", y desde el arreglo
+          // de A1 eso es FALSO: si el código anterior sigue vivo, es justo el que
+          // hay que usar, porque no se emite otro. Decirle a alguien que tire un
+          // código que funciona es peor que no decirle nada.
+          //
+          // La redacción de ahora es cierta en los dos casos —haya código nuevo o
+          // siga valiendo el viejo— y no filtra nada: habla del buzón de quien
+          // pregunta, no de si la cuenta existe.
+          `Revisa tu correo. Si ya tenías un código sin usar, sigue siendo válido.`
+        : `Te hemos enviado un código de ${CODE_LENGTH} dígitos a tu correo. Caduca en ${CADUCIDAD_MINUTOS} minutos.`,
     );
   }
 
@@ -465,13 +487,13 @@ function LoginInner() {
                       <strong className="font-semibold text-text-primary">
                         Marta:
                       </strong>{" "}
-                      karinnase@gmail.com / Marta2026
+                      karinnase@gmail.com / Seguimiento7Azul
                     </p>
                     <p>
                       <strong className="font-semibold text-text-primary">
                         Carlos:
                       </strong>{" "}
-                      karinnaserrano111@gmail.com / Carlos2026
+                      karinnaserrano111@gmail.com / Propuesta4Verde
                     </p>
                   </div>
                 </div>
@@ -580,7 +602,7 @@ function LoginInner() {
                     setError(null);
                   }}
                   disabled={busy}
-                  placeholder="000000"
+                  placeholder={"0".repeat(CODE_LENGTH)}
                   className="h-10 rounded-md border border-border bg-surface px-3 text-center text-lg tracking-[0.3em] text-text-primary outline-none placeholder:tracking-[0.3em] placeholder:text-text-tertiary focus:border-interactive focus:ring-2 focus:ring-focus-ring disabled:opacity-60"
                 />
               </div>

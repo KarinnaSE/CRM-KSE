@@ -95,6 +95,8 @@ npm run check:prod-env
 
 Falla si el deployment de producción tiene alguna variable peligrosa: `ALLOW_DEMO_SEED`, `LOG_OTP_CODES`, `AUTH_LOG_LEVEL=DEBUG` o `AUTH_LOG_SECRETS=true`. Es fail-closed — si no puede leer el entorno, también falla. Un aviso en un README no impide un despiste; esto sí.
 
+Funciona en las dos situaciones sin que haya que acordarse de nada: en una máquina de desarrollo usa `--prod`, y cuando detecta `CONVEX_DEPLOY_KEY` (o sea, en CI) lo omite, porque esa clave ya está ligada a un deployment concreto. **Todavía no está conectado al build de Railway**: un gate mal cableado bloquea *todos* los despliegues, incluidos los que arreglan algo urgente, así que el cableado espera a comprobarse contra un deploy real.
+
 Qué hace peligrosa a cada una:
 
 - **`ALLOW_DEMO_SEED`** habilita `seed:clearAll`, que borra `users`, `authAccounts` y `authSessions`.
@@ -102,14 +104,40 @@ Qué hace peligrosa a cada una:
 - **`AUTH_LOG_LEVEL=DEBUG`** hace que Convex Auth registre los argumentos de sus funciones internas, con códigos de verificación en claro y perfiles completos de OAuth. Por defecto es `INFO`.
 - **`AUTH_LOG_SECRETS=true`** desactiva el redactado de secretos en esos mismos logs.
 
+### Recuperación de contraseña: por qué nadie puede bloquearla
+
+La regla que gobierna `convex/passwordReset.ts` es corta: **un código vivo es sagrado**. Ninguna petición nueva lo invalida, y ningún fallo de intentos lo mata de forma permanente. Detrás está el principio del que sale, que conviene tener presente al tocar cualquier límite de este flujo:
+
+> **Todo cupo que se agota es un arma.** Cualquier contador que un desconocido pueda vaciar en nombre de la víctima deja de ser una defensa y pasa a ser el ataque.
+
+La versión anterior tenía dos cupos agotables, y con cualquiera de los dos un anónimo que supiera un correo dejaba a esa persona sin recuperación de forma indefinida y **silenciosa**, porque la pantalla afirma que el correo salió:
+
+1. **La cuota de 3 solicitudes cada 15 minutos la consumía cualquiera.** Gastando los tres huecos al principio de cada ventana —288 peticiones al día, un bucle trivial— la petición legítima no enviaba nada. Ahora, pedir cuando ya hay un código vivo no lo rota **y no consume cuota**: sin esas dos palancas, la víctima siempre acaba con un código utilizable en el buzón.
+2. **Los 5 intentos de verificación se agotaban y borraban el código.** Eso reinstauraba la misma denegación por otra puerta: bastaba quemar los intentos de cada código recién emitido. Ahora los intentos **se recargan** con el tiempo (uno cada dos minutos), con la misma fórmula que la propia librería usa para el login. Un atacante retrasa a la usuaria unos minutos; no le quita el código.
+
+Al quitar los cupos agotables hay que compensar la fuerza bruta por otro lado, y se hace **ampliando el espacio**: el código pasó de 6 a 8 dígitos. Recortar intentos habría sido volver a crear un cupo vaciable, o sea reintroducir el fallo.
+
+Consecuencia que hay que asumir: si el primer correo se pierde, **no se emite otro hasta que el anterior caduque** (15 minutos). Es el precio de que el código no se pueda invalidar desde fuera, y es un límite que se cura solo.
+
+### Política de contraseñas
+
+Mínimo 12 caracteres, con al menos una mayúscula y un número, y una lista corta de denegación que rechaza palabras comunes y las que contienen el nombre de la persona o del CRM. Vive en `convex/authShared.ts`, que comparten la UI y el backend para que no puedan desviarse.
+
+No es una comprobación contra bases de contraseñas filtradas: eso exigiría una llamada de red en mitad del cambio de contraseña y no es proporcionado aquí.
+
+**Subir el mínimo no deja fuera a nadie.** `validatePasswordRequirements` solo se invoca en los flujos `signUp` y `reset-verification`, nunca en `signIn`: las contraseñas que ya existen siguen sirviendo para entrar, y la política aplica a las nuevas. Por eso endurecerla **no sustituye a rotar** las contraseñas de producción, que es un paso operativo aparte (ver break-glass).
+
 ### Correos que manda el sistema
 
-Los dos van siempre a la dirección **almacenada en la cuenta** (`authAccounts.providerAccountId`), nunca a la que escriba quien rellena el formulario. Ninguno lleva contraseñas, códigos ni enlaces de un solo uso.
+Todos van siempre a la dirección **almacenada en la cuenta** (`authAccounts.providerAccountId` o `users.email`), nunca a la que escriba quien rellena el formulario. Ninguno lleva contraseñas, códigos ni enlaces de un solo uso.
 
 | Correo | Cuándo | Si falla el envío |
 |---|---|---|
 | Código de recuperación | Al pedir recuperar la contraseña | **Rompe el flujo.** Sin correo no hay nada que hacer con la pantalla del código. |
 | Aviso de cambio de contraseña | Después de cambiarla (recuperación o break-glass) | **No rompe nada.** Ver abajo. |
+| Aviso de inicio de sesión | Al crear sesión, **como mucho uno cada 24 h por cuenta** | **No rompe nada.** Un fallo de correo jamás puede impedir entrar. |
+
+**Por qué el aviso de acceso está limitado a uno al día.** Convex no expone IP ni dispositivo en una mutation, así que no hay forma de distinguir un acceso «nuevo» de la rutina diaria. Sin ese límite saldrían varios correos al día, y un correo de seguridad que llega a diario se archiva sin leer: el aviso dejaría de detectar justo cuando hiciera falta. Con el tope se conserva casi toda la capacidad de detección —el acceso de un intruso dispara aviso salvo que la titular ya hubiera entrado ese mismo día— a cambio de un volumen que sí se lee. La marca vive en la tabla `signInNotices`.
 
 **El aviso de cambio es best-effort, a conciencia.** No se envía en línea: se programa con `ctx.scheduler.runAfter(0, …)` y se manda en otro trabajo. El motivo es que ese correo nunca puede hacer fracasar un cambio de contraseña, y eso son dos cosas distintas: no propagar el error (basta un `try/catch`) y no gastar el tiempo de la función que lo llama (no basta). Si Resend se quedara pendiente y el runtime abortara la ejecución, no habría `catch` que corriera, y la pantalla de login traduce cualquier error a "El código no es válido o ha caducado" — con la contraseña ya cambiada y las sesiones ya cerradas.
 
@@ -148,6 +176,12 @@ Si algún día se apunta a otro backend de Convex, la CSP lo sigue **solo si cam
 No se puede sortear desde la aplicación: el tipo de la opción es cerrado (`"localStorage" | "inMemory"`), así que no se puede inyectar un almacén propio, y parchear el interior de la librería cambiaría un riesgo conocido por uno desconocido.
 
 *Qué queda expuesto, medido:* solo el JWT de acceso. El refresh token que se guarda a su lado es **literalmente la cadena `"dummy"`** —comprobado en el navegador—; el real vive solo en la cookie httpOnly. Ese JWT dura 30 minutos, **no puede renovarse**, y revocar la sesión corta el acceso robado en el acto porque la autorización valida contra `authSessions`. Y desde KAR-103 hay una **CSP con `script-src` en modo bloqueo**, así que para leerlo hay que vencer primero esa política.
+
+**Se puede averiguar por tiempos qué correos están dados de alta.** Pedir recuperación con un correo registrado tarda lo que tarde Resend; con uno desconocido se sale en una consulta. Eso desmonta la indistinguibilidad que el resto del flujo persigue. El mismo canal existe en el login, donde Scrypt solo se ejecuta si la cuenta existe.
+
+*Por qué no se arregla:* el arreglo natural —diferir el envío con `ctx.scheduler`— obligaría a pasar el código **en claro** como argumento de una función programada, y los argumentos aparecen en los registros del deployment. Guardarlo en una fila intermedia contradice el diseño HMAC+pepper, que existe justamente para que leer la tabla no dé códigos usables. Las dos salidas cambian una fuga menor por una mayor. Y el impacto aquí es nulo: hay dos cuentas y **sus correos están publicados en este mismo repositorio** (`convex/seed.ts` y la caja de credenciales demo del login). *Condición de revisión:* si el CRM deja de ser un sistema cerrado de dos personas, esto pasa a ser un hallazgo real.
+
+**Que el login no sea un oráculo depende de que Convex redacte los mensajes de error en producción.** `retrieveAccount` lanza `InvalidAccountId`, `InvalidSecret` o `TooManyFailedAttempts` —tres mensajes distinguibles— y el proxy de Convex Auth los reenvía al navegador tal cual. La suposición está documentada en `lib/errores.ts`, pero es una garantía de la plataforma, externa e invisible en el código, de la que depende una propiedad de seguridad. **Pendiente de comprobar contra producción**; si no se redactara, la pantalla de login tendría que dejar de depender de ello.
 
 **Tres advisories altos de dependencias transitivas de Next 15.** No son explotables aquí: los de PostCSS son de compilación y todo el CSS es nuestro; los de sharp solo se alcanzan por `/_next/image`, que responde 400 a cualquier petición; y no usamos `next/image`, Server Actions ni rewrites. Cerrarlos exige subir a Next 16, un salto de versión mayor que merece su propia tarea.
 

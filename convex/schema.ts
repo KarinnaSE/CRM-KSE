@@ -56,14 +56,25 @@ export default defineSchema({
   // punto donde comprobar una cuota, así que un anónimo podía invalidar sin
   // límite el código que la usuaria legítima acababa de recibir.
 
-  // Código vigente de una cuenta. Como mucho uno: `storeCode` borra los previos.
+  // Código vigente de una cuenta. Como mucho uno, y la invariante ya no es la de
+  // KAR-100: un código VIVO no se rota nunca (esa es la defensa del hallazgo A1);
+  // los caducados se limpian al preparar el envío siguiente. Ver `prepararEnvio`.
   passwordResetCodes: defineTable({
     accountId: v.id("authAccounts"),
     // HMAC-SHA256(código, PASSWORD_RESET_PEPPER). No se guarda el código en
-    // claro, y el pepper evita que 10^6 hashes se precomputen en una tabla.
+    // claro, y el pepper evita que 10^8 hashes se precomputen en una tabla.
     codeHash: v.string(),
     expiresAt: v.number(), // epoch ms
+    // Intentos restantes, con RECARGA continua (ver consumeCode). No es un cupo
+    // que se agota: un cupo agotable es algo que un atacante puede vaciar para
+    // dejar sin recuperación a la usuaria legítima.
     attemptsLeft: v.number(),
+    // Momento del último intento, para calcular la recarga. OPCIONAL a propósito:
+    // añadirlo como obligatorio dejaría fuera del esquema las filas que ya
+    // existan en el deployment y el push fallaría. Cuando falta se usa
+    // `_creationTime`, que Convex pone en todos los documentos, así que no hace
+    // falta migración ninguna.
+    lastAttemptTime: v.optional(v.number()), // epoch ms
   }).index("by_account", ["accountId"]),
 
   // Cuota de solicitudes por correo, en ventana fija. Solo se escribe fila para
@@ -74,6 +85,19 @@ export default defineSchema({
     windowStart: v.number(), // epoch ms
     count: v.number(),
   }).index("by_email", ["email"]),
+
+  // ── Aviso de inicio de sesión (auditoría de login, hallazgo A10) ──
+  // Última vez que se avisó a cada persona de un acceso a su cuenta. Existe solo
+  // para SUPRIMIR avisos repetidos: sin señal de IP ni de dispositivo —Convex no
+  // las expone en una mutation— un aviso "de acceso nuevo" degenera en un aviso
+  // de TODOS los accesos, y varios correos al día enseñan a ignorarlos, que es lo
+  // contrario de lo que se busca. Con un tope de uno cada 24 h, el acceso de un
+  // intruso sigue disparando aviso salvo que la titular ya hubiera entrado ese
+  // mismo día.
+  signInNotices: defineTable({
+    userId: v.id("users"),
+    lastNotifiedAt: v.number(), // epoch ms
+  }).index("by_user", ["userId"]),
 
   // ── Cliente ── dato central del CRM.
   clients: defineTable({

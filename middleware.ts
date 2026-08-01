@@ -66,6 +66,24 @@ export default convexAuthNextjsMiddleware(async (request, { convexAuth }) => {
 });
 
 export const config = {
-  // Ejecuta el middleware en todo salvo estáticos y archivos con extensión.
-  matcher: ["/((?!.*\\..*|_next).*)", "/", "/(api|trpc)(.*)"],
+  /**
+   * Ejecuta el middleware en TODO salvo los estáticos de Next.
+   *
+   * El matcher anterior era `"/((?!.*\\..*|_next).*)"`, que excluía cualquier
+   * ruta con un PUNTO en el path. Es el patrón que sugiere la documentación de
+   * Next, y aquí abría un agujero: como existe `app/(app)/clientes/[id]`, una
+   * petición a `/clientes/abc.def` casa con la ruta dinámica y renderiza la
+   * aplicación SIN que este middleware corra. O sea, sin cabecera CSP —que es la
+   * mitigación del JWT en localStorage (KAR-103)— y sin la redirección a /login.
+   *
+   * No filtraba datos: `requireAuthUser` corta en la capa de datos y el AppShell
+   * no renderiza chrome protegido. Pero dejaba un conjunto de URLs alcanzables
+   * sin sesión que esquivaban la política recién desplegada.
+   *
+   * Ahora solo se excluye lo que de verdad no debe pagar el coste: los estáticos
+   * que sirve Next. OJO al excluir cosas de aquí — el proxy de `/api/auth` VIVE
+   * dentro de este middleware (`convexAuthNextjsMiddleware` lo intercepta antes
+   * que nada), así que dejarlo fuera del matcher rompe iniciar y cerrar sesión.
+   */
+  matcher: ["/((?!_next/static|_next/image|favicon\\.ico).*)"],
 };

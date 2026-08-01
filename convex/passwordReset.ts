@@ -1,4 +1,5 @@
 import { action, internalMutation, internalQuery } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v, ConvexError } from "convex/values";
 import {
@@ -24,20 +25,98 @@ import {
  * commiteado. O sea que cualquier cuota puesta ahí frena el correo pero NO evita
  * que un anónimo invalide sin parar el código que la usuaria acaba de recibir.
  *
- * Aquí la cuota se consume ANTES de rotar el código. ESE es el arreglo: si
- * alguien reordena los pasos de `requestCode`, la protección desaparece sin que
- * nada falle de forma visible.
- *
  * Los flows `reset` y `reset-verification` de la librería quedan cerrados POR RED
  * en convex/auth.ts (`ALLOWED_FLOWS`), así que este es el único camino.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA REGLA QUE GOBIERNA ESTE ARCHIVO (auditoría de login, hallazgo A1)
+ *
+ *   UN CÓDIGO VIVO ES SAGRADO: ninguna petición nueva lo invalida, y ningún
+ *   fallo de intentos lo mata de forma permanente.
+ *
+ * Y detrás de ella, el principio del que sale:
+ *
+ *   TODO CUPO QUE SE AGOTA ES UN ARMA. Cualquier contador que un desconocido
+ *   pueda vaciar en nombre de la víctima deja de ser una defensa y pasa a ser el
+ *   ataque.
+ *
+ * La versión anterior tenía DOS cupos agotables, y con cualquiera de los dos un
+ * anónimo que supiera un correo dejaba a esa persona sin recuperación de forma
+ * indefinida y SILENCIOSA (la pantalla afirma que el correo salió):
+ *
+ *   1. La cuota de solicitudes (3 cada 15 min) la consumía cualquiera. Gastando
+ *      los tres huecos al principio de cada ventana —288 peticiones al día, un
+ *      bucle trivial— la petición legítima caía en el rechazo y no se enviaba
+ *      nada. ARREGLO: pedir cuando ya hay un código vivo no rota nada y NO
+ *      CONSUME CUOTA (`prepararEnvio`, paso 2). Al no poder rotarlo ni gastar la
+ *      cuota, el atacante se queda sin ambas palancas: la víctima siempre acaba
+ *      con un código utilizable en el buzón.
+ *
+ *   2. Los 5 intentos de verificación se agotaban y BORRABAN el código. Eso
+ *      reinstauraba exactamente la misma denegación por otra puerta: bastaba con
+ *      quemar los cinco intentos de cada código recién nacido. ARREGLO: los
+ *      intentos se RECARGAN con el tiempo en vez de agotarse (`consumeCode`), con
+ *      la misma fórmula que la propia librería usa para el login
+ *      (implementation/rateLimit.js). Un atacante retrasa a la usuaria unos
+ *      minutos; no le quita el código.
+ *
+ * Al quitar los cupos agotables hay que compensar la fuerza bruta por otro lado,
+ * y se hace AMPLIANDO EL ESPACIO, no recortando intentos: el código pasó de 6 a 8
+ * dígitos (ver convex/authShared.ts). Recortar intentos habría vuelto a crear un
+ * cupo agotable, o sea a reintroducir el fallo.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LO QUE SE DECIDIÓ NO ARREGLAR (hallazgo A2, riesgo aceptado)
+ *
+ * Esta acción tarda distinto según el correo exista o no: con cuenta hay una
+ * llamada HTTP a Resend en el camino crítico; sin cuenta se sale en una query.
+ * Eso permite averiguar por tiempos qué correos están dados de alta, y desmonta
+ * la indistinguibilidad que el resto del archivo persigue.
+ *
+ * No se arregla, y conviene que conste POR QUÉ, porque el arreglo parece obvio y
+ * no lo es. Diferir el envío con `ctx.scheduler` obligaría a pasar el código EN
+ * CLARO como argumento de una función programada, y los argumentos de una
+ * función aparecen en los registros del deployment (ver la cabecera de
+ * convex/passwordChangedEmail.ts, que establece esa regla). Guardarlo en una
+ * fila intermedia contradice el diseño HMAC+pepper de KAR-100, que existe
+ * justamente para que leer la tabla no dé códigos usables. Las dos salidas
+ * cambian una fuga menor por una mayor.
+ *
+ * Y aquí el impacto es nulo: hay dos cuentas y sus correos están PUBLICADOS en
+ * este mismo repositorio (convex/seed.ts y la caja de credenciales demo del
+ * login). La enumeración no revela nada que no esté en GitHub.
+ *
+ * CONDICIÓN DE REVISIÓN: si el CRM deja de ser un sistema cerrado de dos
+ * personas, esto pasa a ser un hallazgo real y hay que diferir el envío
+ * resolviendo antes cómo transportar el secreto sin que acabe en los registros.
  */
 
-/** Solicitudes permitidas por correo dentro de la ventana. */
+/**
+ * Solicitudes permitidas por correo dentro de la ventana.
+ *
+ * Ojo con lo que esta cuota limita HOY: solo las peticiones que de verdad emiten
+ * un código, porque pedir con un código vivo ya no la toca. Deja de ser un
+ * candado sobre la usuaria y pasa a ser lo que debía ser: un tope al volumen de
+ * correo que se puede provocar.
+ */
 const QUOTA_MAX = 3;
 const QUOTA_WINDOW_MS = 15 * 60 * 1000;
 
-/** Intentos de introducir el código antes de invalidarlo. */
+/** Intentos simultáneos de introducir el código. Se RECARGAN, no se agotan. */
 const MAX_VERIFY_ATTEMPTS = 5;
+
+/**
+ * Tiempo en el que se recarga el cupo completo de intentos: 5 por cada 10
+ * minutos, o sea uno cada dos minutos.
+ *
+ * El número sale de un equilibrio explícito. Al alza, la usuaria legítima que se
+ * equivoca varias veces espera de más. A la baja, un atacante que quema intentos
+ * sin parar mantiene el cupo a cero y la deja fuera durante más tiempo. Dos
+ * minutos son un estorbo tolerable para quien tiene el código correcto —le basta
+ * UN hueco— y dejan al atacante en ~720 intentos al día, que contra 10^8 códigos
+ * posibles es alrededor de un 0,02 % al mes.
+ */
+const VERIFY_REFILL_WINDOW_MS = 10 * 60 * 1000;
 
 /**
  * Mensaje ÚNICO para todos los fallos de verificación. Que sea el mismo para
@@ -67,9 +146,9 @@ const INVALID_CODE = "El código no es válido o ha caducado.";
 /**
  * HMAC-SHA256 del código con el pepper del deployment, en hexadecimal.
  *
- * Un sha256 pelado no bastaría: solo hay 10^6 códigos posibles, así que quien
- * consiguiera leer la tabla los precomputaría en segundos. Con el pepper (que
- * vive en la config del deployment, no en la base de datos) eso deja de servir.
+ * Un sha256 pelado no bastaría: solo hay 10^8 códigos posibles, así que quien
+ * consiguiera leer la tabla los precomputaría. Con el pepper (que vive en la
+ * config del deployment, no en la base de datos) eso deja de servir.
  *
  * Se calcula en la ACTION y a las mutations les llega ya el hash: así el código
  * en claro nunca entra en el argumento de una mutation.
@@ -99,9 +178,9 @@ async function hashCode(code: string): Promise<string> {
 }
 
 /**
- * Comparación en tiempo constante de dos hashes hex. Con solo 5 intentos por
- * código el riesgo real de un ataque por tiempos es despreciable, pero cuesta
- * cinco líneas y quita la pregunta de la revisión.
+ * Comparación en tiempo constante de dos hashes hex. Con el cupo de intentos
+ * recargándose despacio el riesgo real de un ataque por tiempos es despreciable,
+ * pero cuesta cinco líneas y quita la pregunta de la revisión.
  */
 function equalsConstantTime(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -117,22 +196,20 @@ function equalsConstantTime(a: string, b: string): boolean {
 /**
  * Paso 1 — pedir el código.
  *
- * Devuelve `null` SIEMPRE, pase lo que pase: correo desconocido, cuota agotada o
- * envío correcto son indistinguibles desde fuera. Un correo que no está dado de
- * alta no escribe NADA (ni código, ni fila de cuota), así que tampoco deja rastro
- * observable.
+ * Devuelve `null` SIEMPRE, pase lo que pase: correo desconocido, código ya vivo,
+ * cuota agotada o envío correcto son indistinguibles desde fuera. Un correo que
+ * no está dado de alta no escribe NADA (ni código, ni fila de cuota), así que
+ * tampoco deja rastro observable.
  *
- * El orden importa y es el arreglo del hallazgo: la cuota (paso 3) va ANTES de
- * rotar el código (paso 5).
+ * ORDEN: se decide y se guarda (`prepararEnvio`, atómico) y solo DESPUÉS se
+ * envía. Es el orden contrario al que tenía este archivo, y el cambio lo permite
+ * la regla del código sagrado: como `prepararEnvio` ya no borra nunca un código
+ * utilizable, guardar primero no puede destruir nada que la usuaria tenga en la
+ * mano. Antes sí podía, y por eso se enviaba primero.
  *
- * OJO al paso 4, que va antes del 5 a propósito: se ENVÍA y solo después se
- * ROTA. Esta acción no es transaccional —las mutations que lanza ya están
- * commiteadas cuando el envío falla—, así que rotar primero significaba que una
- * caída de Resend destruía el código anterior, todavía usable, sin entregar
- * ninguno nuevo. Enviando primero, un fallo de envío deja intacto el código que
- * la usuaria ya tenía. El caso inverso (envía y luego falla `storeCode`) es
- * mucho menos probable —una mutation interna frente a una llamada HTTP externa—
- * y además es benigno: el código anterior sigue sirviendo.
+ * A cambio hay que deshacer si el envío falla, o quedaría un código que nadie ha
+ * recibido bloqueando la emisión del siguiente hasta que caducara — ver el
+ * `catch`.
  */
 export const requestCode = action({
   args: { email: v.string() },
@@ -141,47 +218,60 @@ export const requestCode = action({
     const email = normalizeEmail(args.email);
     if (email === "") return null;
 
-    // 2) ¿Existe la cuenta? Si no, salir sin escribir nada.
+    // 2) ¿Existe la cuenta, y tiene acceso? Si no, salir sin escribir nada.
+    //
+    // El chequeo de `active` es del hallazgo A8: una cuenta desactivada podía
+    // recibir código, cambiar contraseña y disparar correos, todo para nada,
+    // porque `beforeSessionCreation` le corta el paso al entrar. No es escalada,
+    // es trabajo y ruido que no debería existir. Y no filtra: esta acción
+    // devuelve `null` en todos los casos.
     const account = await ctx.runQuery(internal.passwordReset.accountByEmail, {
       email,
     });
-    if (account === null) return null;
+    if (account === null || !account.active) return null;
 
-    // 3) Cuota. ANTES de tocar el código vigente.
-    const permitido = await ctx.runMutation(
-      internal.passwordReset.consumeRequestQuota,
-      { email },
-    );
-    if (!permitido) return null;
-
-    // 4) Enviar, a la dirección ALMACENADA en la cuenta. Si esto lanza, no se ha
-    //    invalidado nada: el código anterior sigue vivo.
+    // 3) Decidir y guardar, en una sola transacción. `prepararEnvio` es quien
+    //    aplica la regla del código sagrado y la cuota; aquí no se decide nada.
     const code = generateNumericCode();
     const codeHash = await hashCode(code);
-    await sendResetCodeEmail(account.providerAccountId, code);
-
-    // 5) Rotar el código ya entregado.
-    //
-    // Si esto falla habiendo salido el correo, la usuaria tiene en la mano un
-    // código que nunca funcionará. No se compensa —no hay nada que deshacer: el
-    // correo ya está entregado y el código anterior sigue intacto—, pero sí se
-    // deja una traza inconfundible en los logs, porque desde fuera ese fallo se
-    // ve idéntico a "el código no es válido" y sin esta línea soporte estaría
-    // adivinando. Se relanza para que la action siga contando como fallida.
-    try {
-      await ctx.runMutation(internal.passwordReset.storeCode, {
+    const { enviar } = await ctx.runMutation(
+      internal.passwordReset.prepararEnvio,
+      {
         accountId: account._id,
+        email,
         codeHash,
         expiresAt: Date.now() + CODE_TTL_MS,
         attemptsLeft: MAX_VERIFY_ATTEMPTS,
-      });
+      },
+    );
+    // Si no toca enviar, el código recién generado se descarta sin más: nunca
+    // llegó a guardarse ni a salir de aquí.
+    if (!enviar) return null;
+
+    // 4) Enviar, a la dirección ALMACENADA en la cuenta, nunca a la cadena que
+    //    escribió quien llamó.
+    try {
+      await sendResetCodeEmail(account.providerAccountId, code);
     } catch (e) {
-      console.error(
-        "[passwordReset] El correo con el código SÍ se envió, pero no se pudo " +
-          "guardar el código: la usuaria recibirá uno que no funciona. " +
-          "Debe volver a pedirlo.",
-        e instanceof Error ? e.message : String(e),
-      );
+      // El código está guardado y nadie lo ha recibido. Si se quedara ahí,
+      // bloquearía la emisión del siguiente durante los 15 minutos de su TTL
+      // —precisamente por la regla que protege los códigos vivos—, y la usuaria
+      // se quedaría sin poder reintentar. Así que se borra y se relanza.
+      try {
+        await ctx.runMutation(internal.passwordReset.descartarCodigo, {
+          accountId: account._id,
+          codeHash,
+        });
+      } catch (errorAlDescartar) {
+        // No enmascarar el fallo original, que es el que explica lo ocurrido.
+        console.error(
+          "[passwordReset] Falló el envío del código Y no se pudo descartar el " +
+            "código guardado. La usuaria no podrá pedir otro hasta que caduque.",
+          errorAlDescartar instanceof Error
+            ? errorAlDescartar.message
+            : String(errorAlDescartar),
+        );
+      }
       throw e;
     }
     return null;
@@ -204,7 +294,7 @@ export const resetPassword = action({
   handler: async (ctx, args) => {
     // La política de contraseñas se aplica ANTES de tocar nada, y en particular
     // antes de consumir un intento del código: escribir una contraseña floja no
-    // debe costarle a nadie uno de sus cinco intentos.
+    // debe costarle a nadie uno de sus intentos.
     //
     // Este mensaje SÍ es específico —la usuaria necesita saber qué le falta a su
     // contraseña— y puede serlo sin abrir nada: habla de lo que ella acaba de
@@ -218,8 +308,13 @@ export const resetPassword = action({
     const account = await ctx.runQuery(internal.passwordReset.accountByEmail, {
       email,
     });
-    // Un correo sin cuenta responde EXACTAMENTE lo mismo que un código malo.
-    if (account === null) throw new ConvexError(INVALID_CODE);
+    // Un correo sin cuenta —o de una cuenta sin acceso (A8)— responde EXACTAMENTE
+    // lo mismo que un código malo. El mensaje opaco es obligatorio aquí: uno
+    // propio del tipo "esta cuenta está desactivada" convertiría la pantalla en un
+    // oráculo del estado de las cuentas.
+    if (account === null || !account.active) {
+      throw new ConvexError(INVALID_CODE);
+    }
 
     const resultado = await ctx.runMutation(
       internal.passwordReset.consumeCode,
@@ -283,7 +378,16 @@ export const resetPassword = action({
 
 /* ─────────────────────── Funciones internas ─────────────────────── */
 
-/** Cuenta Password de un correo ya normalizado, o `null`. */
+/**
+ * Cuenta Password de un correo ya normalizado, o `null`.
+ *
+ * Devuelve también si la persona tiene acceso (`active`), porque quien llama lo
+ * necesita para no trabajar sobre cuentas desactivadas (hallazgo A8). Se expone
+ * el dato y NO se decide aquí: la puerta de emergencia
+ * (`provisionUsers:resetUserPassword`) sí debe poder operar sobre una cuenta
+ * desactivada — puede formar parte de reactivarla—, mientras que el flujo público
+ * de recuperación no.
+ */
 export const accountByEmail = internalQuery({
   args: { email: v.string() },
   handler: async (ctx, { email }) => {
@@ -294,88 +398,135 @@ export const accountByEmail = internalQuery({
       )
       .unique();
     if (account === null) return null;
+    const user = await ctx.db.get(account.userId);
     // Se devuelve solo lo necesario: nunca el `secret` de la cuenta.
     return {
       _id: account._id,
       userId: account.userId,
       providerAccountId: account.providerAccountId,
+      // Fail-closed, igual que `currentActiveUser`: solo `true` es acceso.
+      active: user !== null && user.active === true,
     };
   },
 });
 
 /**
- * Consume una unidad de cuota. Ventana FIJA.
+ * Decide si toca emitir código y, si toca, lo guarda. TODO en una sola
+ * transacción: la comprobación y la escritura no pueden separarse, o dos
+ * peticiones simultáneas emitirían dos códigos y se pisarían.
  *
- * OJO con el tercer caso: cuando la cuota está agotada se rechaza SIN tocar
- * `windowStart` ni `count`. Si el rechazo desplazara la ventana, un atacante
- * golpeando sin parar la mantendría viva indefinidamente y la usuaria legítima no
- * podría recuperar nunca — volveríamos exactamente al problema que arregla este
- * PR, solo que por otra vía.
+ * Sustituye a las antiguas `consumeRequestQuota` + `storeCode`, que estaban en
+ * mutations distintas y por tanto en transacciones distintas.
  */
-export const consumeRequestQuota = internalMutation({
-  args: { email: v.string() },
-  handler: async (ctx, { email }) => {
-    const now = Date.now();
-    const fila = await ctx.db
-      .query("passwordResetRequests")
-      .withIndex("by_email", (q) => q.eq("email", email))
-      .unique();
-
-    if (fila === null) {
-      await ctx.db.insert("passwordResetRequests", {
-        email,
-        windowStart: now,
-        count: 1,
-      });
-      return true;
-    }
-    if (now - fila.windowStart > QUOTA_WINDOW_MS) {
-      await ctx.db.patch(fila._id, { windowStart: now, count: 1 });
-      return true;
-    }
-    if (fila.count >= QUOTA_MAX) return false; // sin escribir nada
-    await ctx.db.patch(fila._id, { count: fila.count + 1 });
-    return true;
-  },
-});
-
-/**
- * Guarda el código vigente, invalidando el anterior.
- *
- * Borra TODAS las filas de la cuenta, no una: el índice `by_account` no impone
- * unicidad física, así que `.unique()` lanzaría si alguna vez hubiera dos y
- * dejaría la recuperación rota.
- */
-export const storeCode = internalMutation({
+export const prepararEnvio = internalMutation({
   args: {
     accountId: v.id("authAccounts"),
+    email: v.string(),
     codeHash: v.string(),
     expiresAt: v.number(),
     attemptsLeft: v.number(),
   },
   handler: async (ctx, args) => {
-    const previos = await ctx.db
+    const ahora = Date.now();
+
+    // 1) ¿Hay ya un código para esta cuenta?
+    //
+    // Se leen TODAS las filas, no una: el índice `by_account` no impone unicidad
+    // física, así que `.unique()` lanzaría si alguna vez hubiera dos y dejaría la
+    // recuperación rota.
+    const filas = await ctx.db
       .query("passwordResetCodes")
       .withIndex("by_account", (q) => q.eq("accountId", args.accountId))
       .collect();
-    for (const previo of previos) await ctx.db.delete(previo._id);
 
+    // 2) EL ARREGLO. Si alguno sigue vivo, no se toca nada y no se envía nada.
+    //
+    //    No se rota (la usuaria conserva el código que ya tiene en el buzón) y
+    //    NO SE CONSUME CUOTA, que es la otra mitad: si el rechazo gastara cuota,
+    //    un atacante seguiría pudiendo vaciarla a base de peticiones y volvería a
+    //    dejar sin recuperación a la usuaria, exactamente el fallo que esto cierra.
+    //
+    //    Un código sin intentos disponibles también cuenta como vivo: los
+    //    intentos se recargan (ver `consumeCode`), así que ese código le sigue
+    //    sirviendo a quien conoce el número.
+    if (filas.some((fila) => fila.expiresAt > ahora)) {
+      return { enviar: false as const };
+    }
+
+    // 3) Solo quedaban caducados: fuera.
+    for (const fila of filas) await ctx.db.delete(fila._id);
+
+    // 4) Cuota. Ahora solo la pagan las peticiones que de verdad emiten código.
+    if (!(await consumirCuota(ctx, args.email, ahora))) {
+      return { enviar: false as const };
+    }
+
+    // 5) Guardar el código nuevo.
     await ctx.db.insert("passwordResetCodes", {
       accountId: args.accountId,
       codeHash: args.codeHash,
       expiresAt: args.expiresAt,
       attemptsLeft: args.attemptsLeft,
+      lastAttemptTime: ahora,
     });
+    return { enviar: true as const };
   },
 });
 
 /**
+ * Consume una unidad de cuota. Ventana FIJA. Devuelve `false` si está agotada.
+ *
+ * OJO con el tercer caso: cuando la cuota está agotada se rechaza SIN tocar
+ * `windowStart` ni `count`. Si el rechazo desplazara la ventana, un atacante
+ * golpeando sin parar la mantendría viva indefinidamente y la usuaria legítima no
+ * podría emitir nunca.
+ */
+async function consumirCuota(
+  ctx: MutationCtx,
+  email: string,
+  ahora: number,
+): Promise<boolean> {
+  const fila = await ctx.db
+    .query("passwordResetRequests")
+    .withIndex("by_email", (q) => q.eq("email", email))
+    .unique();
+
+  if (fila === null) {
+    await ctx.db.insert("passwordResetRequests", {
+      email,
+      windowStart: ahora,
+      count: 1,
+    });
+    return true;
+  }
+  if (ahora - fila.windowStart > QUOTA_WINDOW_MS) {
+    await ctx.db.patch(fila._id, { windowStart: ahora, count: 1 });
+    return true;
+  }
+  if (fila.count >= QUOTA_MAX) return false; // sin escribir nada
+  await ctx.db.patch(fila._id, { count: fila.count + 1 });
+  return true;
+}
+
+/**
  * Verifica y consume el código. Un fallo nunca dice cuál de los motivos fue.
- * Cada intento fallido gasta uno de los `MAX_VERIFY_ATTEMPTS`.
+ *
+ * LOS INTENTOS SE RECARGAN, NO SE AGOTAN. Es el segundo arreglo del hallazgo A1.
+ * Antes, cinco fallos borraban la fila, así que un desconocido que quemara los
+ * cinco intentos de cada código recién emitido dejaba a la usuaria sin
+ * recuperación de forma indefinida — la misma denegación que la cuota, por otra
+ * puerta.
+ *
+ * La fórmula es la misma que usa la propia librería para el login
+ * (implementation/rateLimit.js): el cupo se rellena de forma continua en
+ * proporción al tiempo transcurrido. Quien tiene el código correcto solo
+ * necesita UN hueco, así que el peor caso para la usuaria legítima es esperar un
+ * par de minutos; el atacante, en cambio, nunca consigue matar el código.
  */
 export const consumeCode = internalMutation({
   args: { accountId: v.id("authAccounts"), codeHash: v.string() },
   handler: async (ctx, args) => {
+    const ahora = Date.now();
     const filas = await ctx.db
       .query("passwordResetCodes")
       .withIndex("by_account", (q) => q.eq("accountId", args.accountId))
@@ -389,12 +540,31 @@ export const consumeCode = internalMutation({
     }
 
     const fila = filas[0];
-    if (fila.expiresAt < Date.now() || fila.attemptsLeft <= 0) {
+    if (fila.expiresAt < ahora) {
       await ctx.db.delete(fila._id);
       return { ok: false as const };
     }
+
+    // Recarga continua. `lastAttemptTime` puede faltar en filas anteriores a este
+    // cambio; `_creationTime` lo pone Convex siempre, así que sirve de respaldo y
+    // no hace falta migración.
+    const desde = fila.lastAttemptTime ?? fila._creationTime;
+    const disponibles = Math.min(
+      MAX_VERIFY_ATTEMPTS,
+      fila.attemptsLeft +
+        ((ahora - desde) * MAX_VERIFY_ATTEMPTS) / VERIFY_REFILL_WINDOW_MS,
+    );
+
+    // Sin huecos ahora mismo. Se rechaza SIN BORRAR: el código sigue siendo
+    // válido y volverá a admitir intentos en cuanto se recargue. Borrarlo aquí
+    // sería devolverle al atacante el arma que este cambio le quita.
+    if (disponibles < 1) return { ok: false as const };
+
     if (!equalsConstantTime(fila.codeHash, args.codeHash)) {
-      await ctx.db.patch(fila._id, { attemptsLeft: fila.attemptsLeft - 1 });
+      await ctx.db.patch(fila._id, {
+        attemptsLeft: disponibles - 1,
+        lastAttemptTime: ahora,
+      });
       return { ok: false as const };
     }
 
@@ -403,6 +573,24 @@ export const consumeCode = internalMutation({
     const account = await ctx.db.get(args.accountId);
     if (account === null) return { ok: false as const };
     return { ok: true as const, userId: account.userId };
+  },
+});
+
+/**
+ * Borra el código recién guardado cuando el envío falla. Solo si el hash
+ * COINCIDE: si mientras tanto hubiera entrado otra petición y guardado uno nuevo,
+ * borrarlo a ciegas destruiría un código que sí se ha entregado.
+ */
+export const descartarCodigo = internalMutation({
+  args: { accountId: v.id("authAccounts"), codeHash: v.string() },
+  handler: async (ctx, { accountId, codeHash }) => {
+    const filas = await ctx.db
+      .query("passwordResetCodes")
+      .withIndex("by_account", (q) => q.eq("accountId", accountId))
+      .collect();
+    for (const fila of filas) {
+      if (fila.codeHash === codeHash) await ctx.db.delete(fila._id);
+    }
   },
 });
 

@@ -15,29 +15,33 @@
  */
 
 import { emailShell, sendEmail, type EmailContent } from "./email";
+import { CODE_LENGTH, CODE_TTL_MS } from "./authShared";
 
-export const CODE_LENGTH = 6;
-export const CODE_TTL_MS = 15 * 60 * 1000; // 15 minutos
+// La forma del código se define en convex/authShared.ts, que es puro y lo puede
+// importar también la pantalla de login (este archivo no: arrastra `./email`, y
+// con él el transporte de Resend, al bundle del cliente). Se reexporta para no
+// cambiar los imports de convex/passwordReset.ts.
+export { CODE_LENGTH, CODE_TTL_MS };
 
 /**
  * Código numérico de `CODE_LENGTH` dígitos, criptográficamente seguro.
  *
- * Usa muestreo por rechazo para evitar el SESGO DE MÓDULO: `random % 1e6` sobre
+ * Usa muestreo por rechazo para evitar el SESGO DE MÓDULO: `random % 1e8` sobre
  * el rango completo de un uint32 favorecería a los primeros valores, porque 2^32
- * no es múltiplo de 1.000.000. Se descartan los enteros por encima del mayor
+ * no es múltiplo de 100.000.000. Se descartan los enteros por encima del mayor
  * múltiplo de `RANGE` que cabe en 32 bits, de modo que todos los códigos son
  * equiprobables.
  */
 export function generateNumericCode(): string {
-  const RANGE = 10 ** CODE_LENGTH; // 1_000_000 códigos posibles
-  const LIMIT = Math.floor(0x100000000 / RANGE) * RANGE; // 4_294_000_000
+  const RANGE = 10 ** CODE_LENGTH; // 100_000_000 códigos posibles (8 dígitos)
+  const LIMIT = Math.floor(0x100000000 / RANGE) * RANGE; // 4_200_000_000
   const buffer = new Uint32Array(1);
   let value: number;
   do {
     crypto.getRandomValues(buffer);
     value = buffer[0];
   } while (value >= LIMIT);
-  // `padStart` conserva los ceros a la izquierda (p. ej. "007321").
+  // `padStart` conserva los ceros a la izquierda (p. ej. "00732145").
   return String(value % RANGE).padStart(CODE_LENGTH, "0");
 }
 
