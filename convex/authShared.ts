@@ -42,6 +42,28 @@ export const CODE_LENGTH = 8;
 export const CODE_TTL_MS = 15 * 60 * 1000; // 15 minutos
 
 /**
+ * Vida del código de INVITACIÓN, que es distinta a propósito (KAR-54).
+ *
+ * Una recuperación la acaba de pedir la propia persona, con el navegador
+ * abierto: 15 minutos le sobran. Una invitación no la espera nadie, y encima
+ * viaja peor — las pasarelas corporativas la retienen para escanearla, el
+ * greylisting la retrasa y una cuarentena puede quedársela horas. Con 15
+ * minutos, el código caducaría EN TRÁNSITO y la persona recibiría un correo ya
+ * inútil.
+ *
+ * 24 horas NO debilitan nada. Los intentos se recargan a razón de 5 cada 10
+ * minutos (ver convex/passwordReset.ts), o sea unos 720 al día, y contra los
+ * 10^8 códigos posibles eso es alrededor de un 0,0007 % en toda la ventana. La
+ * cuota de 3 emisiones cada 15 minutos por correo sigue topando el volumen.
+ *
+ * La contrapartida —que un correo perdido bloquee la emisión del siguiente
+ * durante un día, por la regla del código sagrado— la resuelve el reenvío
+ * forzado de la dueña (`users.reenviarInvitacion`), que está acotado a
+ * invitaciones pendientes.
+ */
+export const INVITE_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
+
+/**
  * Política de contraseñas del CRM. El máximo acota el coste de Scrypt.
  *
  * El mínimo subió de 8 a 12 (auditoría de login, hallazgo A5). Con 8 y el límite

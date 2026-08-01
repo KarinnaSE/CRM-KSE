@@ -16,6 +16,7 @@ import type * as dates from "../dates.js";
 import type * as email from "../email.js";
 import type * as http from "../http.js";
 import type * as interactions from "../interactions.js";
+import type * as invitationEmail from "../invitationEmail.js";
 import type * as passwordChangedEmail from "../passwordChangedEmail.js";
 import type * as passwordReset from "../passwordReset.js";
 import type * as passwordResetEmail from "../passwordResetEmail.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   email: typeof email;
   http: typeof http;
   interactions: typeof interactions;
+  invitationEmail: typeof invitationEmail;
   passwordChangedEmail: typeof passwordChangedEmail;
   passwordReset: typeof passwordReset;
   passwordResetEmail: typeof passwordResetEmail;

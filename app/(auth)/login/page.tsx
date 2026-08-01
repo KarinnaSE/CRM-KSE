@@ -7,7 +7,6 @@ import { useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import {
   CODE_LENGTH,
-  CODE_TTL_MS,
   PASSWORD_RULE_TEXT,
   normalizeEmail,
   passwordProblem,
@@ -42,11 +41,18 @@ export default function LoginPage() {
 /** Pasos de la pantalla. "signIn" es el estado por defecto. */
 type Mode = "signIn" | "requestCode" | "enterCode";
 
-// `CODE_LENGTH` y `CODE_TTL_MS` se IMPORTAN de convex/authShared.ts. Antes esta
-// pantalla declaraba su propio `const CODE_LENGTH = 6`, así que al cambiar la
-// longitud en el backend la validación de aquí seguía exigiendo 6 y rechazaba
-// códigos correctos, sin que fallara el build ni los tipos.
-const CADUCIDAD_MINUTOS = Math.round(CODE_TTL_MS / 60000);
+// `CODE_LENGTH` se IMPORTA de convex/authShared.ts. Antes esta pantalla
+// declaraba su propio `const CODE_LENGTH = 6`, así que al cambiar la longitud en
+// el backend la validación de aquí seguía exigiendo 6 y rechazaba códigos
+// correctos, sin que fallara el build ni los tipos.
+//
+// LA CADUCIDAD YA NO SE ANUNCIA AQUÍ, y es a propósito (KAR-54). Desde que
+// existen las invitaciones hay DOS plazos: 15 minutos para un código de
+// recuperación y 24 horas para uno de invitación (CODE_TTL_MS e INVITE_TTL_MS).
+// Esta pantalla no sabe —ni debe saber, porque delataría el estado de la
+// cuenta— cuál de los dos tiene delante, así que anunciar un número concreto
+// sería mentir a la mitad de la gente. El plazo lo dice el propio correo, que sí
+// lo sabe con certeza.
 
 function LoginInner() {
   const router = useRouter();
@@ -187,7 +193,11 @@ function LoginInner() {
           // siga valiendo el viejo— y no filtra nada: habla del buzón de quien
           // pregunta, no de si la cuenta existe.
           `Revisa tu correo. Si ya tenías un código sin usar, sigue siendo válido.`
-        : `Te hemos enviado un código de ${CODE_LENGTH} dígitos a tu correo. Caduca en ${CADUCIDAD_MINUTOS} minutos.`,
+        : // Sin plazo en el texto, por lo explicado arriba en CODE_LENGTH: hay
+          // dos caducidades posibles y esta pantalla no distingue cuál aplica.
+          // Se mantiene la forma AFIRMATIVA de KAR-105 y se añade el caso del
+          // código vivo, que aquí es indistinguible de un envío nuevo.
+          `Te hemos enviado un código de ${CODE_LENGTH} dígitos a tu correo. Si ya tenías uno sin usar, ese sigue siendo el válido.`,
     );
   }
 
