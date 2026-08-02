@@ -12,6 +12,7 @@ import { useCurrentUser } from "@/components/auth/CurrentUserProvider";
 import {
   destinoDeSalida,
   limpiarSalidaIntencionada,
+  marcarSalidaIntencionada,
 } from "@/lib/salidaIntencionada";
 
 /**
@@ -45,29 +46,38 @@ export function AppShell({ children }: { children: ReactNode }) {
     limpiarSalidaIntencionada();
   }, []);
 
+  /**
+   * LAS DOS RAMAS SON LA MISMA SALIDA VISTA POR DOS SEÑALES DISTINTAS, y por eso
+   * las dos piden el destino a `destinoDeSalida()` en vez de escribirlo (KAR-112).
+   *
+   * Que una sesión termine se nota de dos formas —`isAuthenticated` pasa a falso,
+   * y `users.me` pasa a `null`— y cuál llega antes no es predecible. Cuando cada
+   * rama escribía su destino a mano, el mensaje dependía de quién ganara esa
+   * carrera, y salía justo al revés de lo que debía: un cierre de sesión normal
+   * enseñaba "Tu cuenta no tiene acceso" (falso) y una desactivación con la sesión
+   * abierta no enseñaba nada.
+   *
+   * Compartir la autoridad es lo que lo arregla: gane la señal que gane, el
+   * destino es el mismo. Ver la invariante en lib/salidaIntencionada.ts.
+   */
   useEffect(() => {
     if (isLoading) return;
     if (!isAuthenticated) {
-      router.replace("/login");
+      router.replace(destinoDeSalida());
     } else if (user === null) {
-      /**
-       * `user === null` con sesión viva significa una de DOS cosas que desde
-       * aquí no se distinguen: que la cuenta no tiene acceso, o que su sesión ya
-       * no existe. Por eso el destino no se escribe aquí sino que lo decide
-       * `destinoDeSalida()`, que es la MISMA función que usa la pantalla de
-       * usuarios al cambiar el correo propio (lib/salidaIntencionada.ts).
-       *
-       * Compartirla es lo que hace que el orden entre este efecto y la pantalla
-       * deje de importar: gane quien gane, el destino es el mismo. Ver la
-       * invariante en la cabecera de ese archivo.
-       */
+      // `user === null` con sesión viva es cuenta sin acceso O sesión que ya no
+      // existe; desde aquí no se distinguen, y por diseño no hace falta.
       void signOut().then(() => router.replace(destinoDeSalida()));
     }
   }, [isLoading, isAuthenticated, user, router, signOut]);
 
   async function handleLogout() {
+    // La marca va ANTES del `await`: a partir de aquí no hay ningún instante en
+    // que el efecto de arriba pueda ver la sesión caída sin saber que esta
+    // salida la pidió ella. Sin esto, cerrar sesión enseñaba un error falso.
+    marcarSalidaIntencionada();
     await signOut();
-    router.replace("/login");
+    router.replace(destinoDeSalida());
   }
 
   // No renderizar chrome protegido hasta tener usuario activo.

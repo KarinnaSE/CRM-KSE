@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import {
   marcarSalidaIntencionada,
   limpiarSalidaIntencionada,
+  destinoDeSalida,
 } from "@/lib/salidaIntencionada";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/clientes/Modal";
@@ -287,7 +288,11 @@ export function UsuarioModal({
       } catch {
         /* ya cerrada */
       }
-      router.replace("/login");
+      // Se PIDE el destino, no se escribe. Antes ponía "/login" a mano y
+      // acertaba solo por coincidencia: da la casualidad de que es lo que
+      // devuelve la marca puesta. El día que cambiara el destino deliberado,
+      // este camino habría divergido en silencio (KAR-112, regla 3).
+      router.replace(destinoDeSalida());
     }
   }
 
