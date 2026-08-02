@@ -132,6 +132,7 @@ export function UsuarioModal({
     esDuena: fila?.role === "duena",
     esYo: fila?.esYo === true,
     sinContrasena: fila?.sinContrasena === true,
+    conGoogle: fila?.conGoogle === true,
     active: fila?.active !== false,
     email: fila?.email ?? "",
   }));
@@ -438,7 +439,7 @@ function BloqueInvitacion({
   onForzar,
   onDejarlo,
 }: {
-  snapshot: { sinContrasena: boolean; active: boolean };
+  snapshot: { sinContrasena: boolean; conGoogle: boolean; active: boolean };
   reenvio: Reenvio;
   onReenviar: () => void;
   onForzar: () => void;
@@ -501,10 +502,18 @@ function BloqueInvitacion({
     );
   }
 
+  /**
+   * El bloque sigue apareciendo aunque esa persona ya entre con Google
+   * (KAR-115): la invitación es lo que le permite TENER contraseña, y quererla
+   * es legítimo —un móvil sin la sesión de Google iniciada, por ejemplo—. Lo que
+   * cambia es el texto, que antes daba a entender que estaba a medio configurar.
+   */
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-surface-2 p-3">
       <p className="text-sm text-text-secondary">
-        Todavía no ha configurado su contraseña.
+        {snapshot.conGoogle
+          ? "Entra con Google. Si además quiere una contraseña, envíale una invitación."
+          : "Todavía no ha configurado su contraseña."}
       </p>
       <Button
         type="button"
