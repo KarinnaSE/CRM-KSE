@@ -117,7 +117,7 @@ export const send = internalAction({
       urlLogin: loginUrl(),
     });
     try {
-      await sendEmail(args.to, contenido);
+      await sendEmail(args.to, contenido, "aviso de cambio de contraseña");
     } catch (e) {
       console.error(
         "[passwordChangedEmail] La contraseña SÍ se cambió, pero no se pudo " +

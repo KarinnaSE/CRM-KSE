@@ -36,18 +36,18 @@ const FROM = "KSE CRM <no-reply@crm-kse.com>"; // dominio verificado en Resend
 const TIMEOUT_MS = 8_000;
 
 /**
- * Tope para leer el cuerpo de una respuesta de error.
+ * Tope para leer el cuerpo de una respuesta de Resend, sea de error o de éxito.
  *
  * Va aparte de TIMEOUT_MS porque cubre otro tramo: cuando `fetch` resuelve, el
  * temporizador abortable ya se ha limpiado, pero el CUERPO puede seguir
- * llegando. Sin este tope, una respuesta de error que no termina de descargarse
- * dejaría `sendEmail` pendiente aunque la petición ya hubiera "respondido". En
- * el aviso de cambio de contraseña eso no afectaría a nadie (va en un trabajo
+ * llegando. Sin este tope, una respuesta que no termina de descargarse dejaría
+ * `sendEmail` pendiente aunque la petición ya hubiera "respondido". En el aviso
+ * de cambio de contraseña eso no afectaría a nadie (va en un trabajo
  * programado), pero el correo del código sí está en el camino crítico de
- * `requestCode`. Es corto a propósito: esto solo sirve para diagnosticar, y un
- * mensaje sin detalle es mejor que una función colgada.
+ * `requestCode`. Es corto a propósito: el cuerpo solo sirve para diagnosticar, y
+ * un registro sin detalle es mejor que una función colgada.
  */
-const CUERPO_ERROR_TIMEOUT_MS = 2_000;
+const CUERPO_TIMEOUT_MS = 2_000;
 
 /** Correo ya compuesto: lo que devuelven los `build*Email` de cada flujo. */
 export type EmailContent = {
@@ -62,10 +62,15 @@ export type EmailContent = {
  *
  * `to` debe ser SIEMPRE la dirección almacenada en la cuenta
  * (`authAccounts.providerAccountId`), nunca una cadena que venga del cliente.
+ *
+ * `flujo` es una etiqueta corta para el registro ("recuperación", "invitación"…).
+ * Es OBLIGATORIA, no opcional: sin ella todas las líneas del registro se
+ * parecerían y no se podría saber qué correo salió (KAR-116).
  */
 export async function sendEmail(
   to: string,
   { subject, text, html }: EmailContent,
+  flujo: string,
 ): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
@@ -106,12 +111,84 @@ export async function sendEmail(
       `Resend rechazó el envío (HTTP ${response.status}). ${await leerDetalleDelError(response)}`,
     );
   }
+
+  /**
+   * RASTRO DEL ENVÍO QUE SÍ SALE (KAR-116).
+   *
+   * Hasta aquí este módulo solo dejaba constancia de los fallos, y eso convirtió
+   * un incidente real —"no llega el correo de recuperación"— en cuarenta minutos
+   * de deducción: la única señal de que un correo había salido era INDIRECTA, que
+   * la fila del código siguiera en la tabla, porque quien llama la borra cuando
+   * el envío falla. Con el id de Resend delante, la misma pregunta se contesta
+   * cruzando este registro con su panel.
+   *
+   * QUÉ NO VA EN ESTA LÍNEA, y es deliberado: ni el destinatario ni nada del
+   * contenido. El id ya permite mirar el envío en Resend, que es donde esos datos
+   * viven de por sí; duplicarlos en el registro del deployment sería repartir el
+   * mismo dato por más sitios sin ganar nada.
+   *
+   * El id se lee del cuerpo, así que se paga una lectura en el camino crítico de
+   * `requestCode`. Está acotada por CUERPO_TIMEOUT_MS y, si no llega a tiempo, se
+   * registra igual sin id: saber que Resend aceptó ya es la mitad de la respuesta.
+   */
+  const id = await leerIdDeResend(response);
+  console.info(
+    `[email] ${flujo}: Resend aceptó el envío` +
+      (id === null ? " (sin id: el cuerpo no llegó a tiempo)." : ` (id ${id}).`),
+  );
+}
+
+/**
+ * El `id` que Resend devuelve en el cuerpo de una respuesta correcta, o `null`.
+ *
+ * Nunca lanza: este dato es para el registro, y quedarse sin él no puede tumbar
+ * un correo que Resend YA ha aceptado. Un cuerpo que no es JSON, o que no trae
+ * `id`, se trata igual que uno que no llegó a tiempo.
+ */
+async function leerIdDeResend(response: Response): Promise<string | null> {
+  const cuerpo = await leerCuerpoAcotado(response);
+  if (cuerpo === null) return null;
+  try {
+    const datos: unknown = JSON.parse(cuerpo);
+    if (typeof datos === "object" && datos !== null && "id" in datos) {
+      const id = (datos as { id: unknown }).id;
+      if (typeof id === "string") return id;
+    }
+  } catch {
+    // Cuerpo que no es JSON. No es un fallo del envío.
+  }
+  return null;
+}
+
+/**
+ * Lee el cuerpo de una respuesta con el tope de CUERPO_TIMEOUT_MS, o `null` si
+ * no llega a tiempo. Lo comparten el camino de error y el de éxito: la carrera
+ * contra el temporizador es idéntica en los dos y tenerla dos veces es tenerla
+ * mal una de ellas.
+ */
+async function leerCuerpoAcotado(response: Response): Promise<string | null> {
+  const AGOTADO = Symbol("agotado");
+  let temporizador: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    const cuerpo = await Promise.race([
+      // Un fallo al leer se trata como cuerpo vacío, no como excepción.
+      response.text().catch(() => ""),
+      new Promise<typeof AGOTADO>((resolve) => {
+        temporizador = setTimeout(() => resolve(AGOTADO), CUERPO_TIMEOUT_MS);
+      }),
+    ]);
+    return cuerpo === AGOTADO ? null : cuerpo;
+  } finally {
+    clearTimeout(temporizador);
+  }
 }
 
 /**
  * Lee el cuerpo de una respuesta de error para poder diagnosticar.
  *
- * Acotado EN TIEMPO, por lo explicado en `CUERPO_ERROR_TIMEOUT_MS`.
+ * Acotado EN TIEMPO por `leerCuerpoAcotado`, por lo explicado en
+ * `CUERPO_TIMEOUT_MS`.
  *
  * Del tamaño solo se acota lo que SALE: el `slice` evita volcar en los logs
  * entero lo que devuelva un tercero, que podría acabar metiendo ahí datos de la
@@ -123,24 +200,9 @@ export async function sendEmail(
  * Nunca lanza: el error que importa es el HTTP, no el de leer su explicación.
  */
 async function leerDetalleDelError(response: Response): Promise<string> {
-  const AGOTADO = Symbol("agotado");
-  let temporizador: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    const cuerpo = await Promise.race([
-      // Un fallo al leer se trata como cuerpo vacío, no como excepción.
-      response.text().catch(() => ""),
-      new Promise<typeof AGOTADO>((resolve) => {
-        temporizador = setTimeout(() => resolve(AGOTADO), CUERPO_ERROR_TIMEOUT_MS);
-      }),
-    ]);
-    if (cuerpo === AGOTADO) {
-      return "(el cuerpo de la respuesta no llegó a tiempo)";
-    }
-    return cuerpo.slice(0, 200);
-  } finally {
-    clearTimeout(temporizador);
-  }
+  const cuerpo = await leerCuerpoAcotado(response);
+  if (cuerpo === null) return "(el cuerpo de la respuesta no llegó a tiempo)";
+  return cuerpo.slice(0, 200);
 }
 
 /**
