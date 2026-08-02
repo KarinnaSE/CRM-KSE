@@ -79,20 +79,10 @@ export function UsuarioFila({
             Inactivo
           </span>
         )}
-        {fila.sinContrasena && (
-          /**
-           * OJO CON ESTE TEXTO. "Sin contraseña" NO es "sin acceso": si su correo
-           * es de Google, esa persona puede entrar con "Continuar con Google" sin
-           * haber usado nunca la invitación. Lo dice el comentario de
-           * `users.listar` y es la razón de que el distintivo se llame así.
-           */
-          <span
-            title="Todavía no ha configurado su contraseña. Si su correo es de Google, puede entrar con «Continuar con Google»."
-            className="whitespace-nowrap rounded-full border border-warning-100 bg-warning-50 px-2.5 py-0.5 text-xs font-semibold text-warning-600"
-          >
-            Sin contraseña
-          </span>
-        )}
+        <EtiquetaAcceso
+          sinContrasena={fila.sinContrasena}
+          conGoogle={fila.conGoogle}
+        />
         {fila.role === null && (
           <span
             title="Cuenta mal provisionada: no tiene rol. Edítala para asignarle uno."
@@ -146,6 +136,62 @@ export function UsuarioFila({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Cómo entra esta persona (KAR-115).
+ *
+ * ANTES aquí había un distintivo binario: si no tenía contraseña, "Sin
+ * contraseña" en ámbar. Era literalmente cierto y aun así engañaba, porque la
+ * pantalla lo pintaba igual en dos situaciones opuestas: alguien que entra a
+ * diario con Google y alguien que todavía no puede entrar de ninguna forma. La
+ * dueña leía "algo le falta" de quien no le faltaba nada. Ocurrió en producción
+ * con una cuenta recién invitada que había entrado con Google.
+ *
+ * Ahora el distintivo responde a "cómo entra", y solo aparece cuando hay algo
+ * que saber:
+ *
+ *   sin contraseña + Google vinculado -> "Entra con Google"      (neutro)
+ *   sin contraseña + sin Google       -> "Invitación pendiente"  (ámbar)
+ *   con contraseña                    -> nada, que es lo normal
+ *
+ * EL COLOR ES PARTE DEL MENSAJE: el ámbar se reserva para el único caso en que
+ * la dueña tiene algo que hacer. Pintar de ámbar a quien ya trabaja con
+ * normalidad es lo que hacía ruido.
+ *
+ * Y el texto del caso ámbar NO dice "no puede entrar", porque no lo sabemos:
+ * `conGoogle` es "ha entrado con Google alguna vez", no "su correo es de
+ * Google" (ver la cabecera de `users.listar`). Quien tenga un correo de Google
+ * puede entrar sin tocar el código de invitación.
+ */
+function EtiquetaAcceso({
+  sinContrasena,
+  conGoogle,
+}: {
+  sinContrasena: boolean;
+  conGoogle: boolean;
+}) {
+  if (!sinContrasena) return null;
+
+  if (conGoogle) {
+    return (
+      <span
+        title="Entra con «Continuar con Google». No ha configurado contraseña, y no le hace falta para trabajar."
+        className="whitespace-nowrap rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-text-secondary"
+      >
+        Entra con Google
+      </span>
+    );
+  }
+
+  return (
+    <span
+      title="Todavía no ha configurado su contraseña. Si su correo es de Google, puede entrar con «Continuar con Google» sin usar el código."
+      className="whitespace-nowrap rounded-full border border-warning-100 bg-warning-50 px-2.5 py-0.5 text-xs font-semibold text-warning-600"
+    >
+      Invitación pendiente
+    </span>
   );
 }
 

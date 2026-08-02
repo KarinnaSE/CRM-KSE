@@ -302,7 +302,21 @@ async function hayDuena(ctx: QueryCtx | MutationCtx): Promise<boolean> {
  * acceso": si su correo es de Google, esa persona puede entrar con "Continuar
  * con Google" sin haber usado nunca la invitación, porque la política de
  * convex/auth.ts solo exige que el correo verificado corresponda a un usuario
- * provisionado. El texto de la pantalla tiene que decir "Sin contraseña".
+ * provisionado.
+ *
+ * POR ESO VA ACOMPAÑADO DE `conGoogle` (KAR-115). A solas, `sinContrasena` solo
+ * daba para escribir "Sin contraseña" en la pantalla, que se lee como "algo le
+ * falta" y era FALSO para quien ya estaba entrando todos los días con Google.
+ * Pasó en producción con una cuenta recién invitada. Los dos campos juntos
+ * separan los dos casos que de verdad son distintos —quien tiene acceso por otra
+ * puerta y quien todavía no tiene ninguno—, y solo el segundo pide que la dueña
+ * haga algo.
+ *
+ * OJO CON LO QUE `conGoogle` NO DICE. Es "hay una cuenta de Google VINCULADA",
+ * que no es lo mismo que "su correo es de Google": la fila `authAccounts` nace
+ * la PRIMERA vez que esa persona entra con Google. Así que `sinContrasena &&
+ * !conGoogle` no significa "no puede entrar", solo "todavía no ha entrado por
+ * ahí". La pantalla no debe afirmar lo contrario.
  */
 export const listar = query({
   args: {},
@@ -339,6 +353,8 @@ export const listar = query({
         active: usuario.active === true,
         esYo,
         sinContrasena: password === null || password.secret === undefined,
+        // Ver la cabecera: vinculada, no "su correo es de Google".
+        conGoogle: cuentas.some((cuenta) => cuenta.provider === "google"),
         puedeEliminar: motivoNoEliminar === null,
         motivoNoEliminar,
       });
