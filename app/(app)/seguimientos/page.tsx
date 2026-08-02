@@ -11,6 +11,7 @@ import {
   type Seguimiento,
 } from "@/components/seguimientos/SeguimientoItem";
 import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/ui/Toast";
 
 /**
  * Pantalla: Seguimientos — entrada tras el login (KAR-22).
@@ -58,14 +59,9 @@ export default function SeguimientosPage() {
   const { user } = useCurrentUser();
 
   const [query, setQuery] = useState("");
-  const [toast, setToast] = useState<string | null>(null);
+  const { showToast, toast } = useToast();
   // "Próximos" (futuros) colapsados por defecto: el usuario decide desplegarlos.
   const [showProximos, setShowProximos] = useState(false);
-
-  function showToast(msg: string) {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 3000);
-  }
 
   async function onComplete(id: string) {
     try {
@@ -157,15 +153,7 @@ export default function SeguimientosPage() {
         )}
       </div>
 
-      {/* Toast */}
-      {toast && (
-        <div
-          role="status"
-          className="fixed inset-x-0 bottom-24 z-50 mx-auto w-fit rounded-full bg-text-primary px-4 py-2 text-sm text-surface shadow-lg"
-        >
-          {toast}
-        </div>
-      )}
+      {toast}
     </section>
   );
 }

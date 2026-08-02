@@ -8,6 +8,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { backendMessage } from "@/lib/errores";
 import { cn, STAGES, type StageKey } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/ui/Toast";
 import { Modal } from "@/components/clientes/Modal";
 import { ClientCard } from "@/components/clientes/ClientCard";
 import { HistoryTimeline } from "@/components/clientes/HistoryTimeline";
@@ -35,12 +36,7 @@ export function FichaClient({ clientId }: { clientId: string }) {
   const historial = useQuery(api.clients.historial, { clientId });
 
   const [modal, setModal] = useState<ModalKind>(null);
-  const [toast, setToast] = useState<string | null>(null);
-
-  function showToast(msg: string) {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 3000);
-  }
+  const { showToast, toast } = useToast();
   const close = () => setModal(null);
 
   return (
@@ -102,14 +98,7 @@ export function FichaClient({ clientId }: { clientId: string }) {
         <VentaModal clientId={clientId} onClose={close} showToast={showToast} />
       )}
 
-      {toast && (
-        <div
-          role="status"
-          className="fixed inset-x-0 bottom-24 z-[60] mx-auto w-fit rounded-full bg-text-primary px-4 py-2 text-sm text-surface shadow-lg"
-        >
-          {toast}
-        </div>
-      )}
+      {toast}
     </section>
   );
 }

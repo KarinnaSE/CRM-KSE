@@ -9,6 +9,10 @@ import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { useCurrentUser } from "@/components/auth/CurrentUserProvider";
+import {
+  destinoDeSalida,
+  limpiarSalidaIntencionada,
+} from "@/lib/salidaIntencionada";
 
 /**
  * Chrome de navegación persistente (KAR-24) + guardas de sesión (KAR-7).
@@ -29,12 +33,35 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { signOut } = useAuthActions();
   const [profileOpen, setProfileOpen] = useState(false);
 
+  /**
+   * Al montar el chrome con una usuaria activa se limpia la marca de salida
+   * intencionada (KAR-55, M1). Es el punto correcto porque corre DESPUÉS de
+   * volver a entrar y NUNCA en mitad del flujo: durante la salida el AppShell ya
+   * está montado, no se monta otra vez. Sin esto, una marca puesta podría
+   * sobrevivir a una sesión nueva en la misma pestaña y enmascarar un "sin
+   * acceso" de verdad.
+   */
+  useEffect(() => {
+    limpiarSalidaIntencionada();
+  }, []);
+
   useEffect(() => {
     if (isLoading) return;
     if (!isAuthenticated) {
       router.replace("/login");
     } else if (user === null) {
-      void signOut().then(() => router.replace("/login?error=disabled"));
+      /**
+       * `user === null` con sesión viva significa una de DOS cosas que desde
+       * aquí no se distinguen: que la cuenta no tiene acceso, o que su sesión ya
+       * no existe. Por eso el destino no se escribe aquí sino que lo decide
+       * `destinoDeSalida()`, que es la MISMA función que usa la pantalla de
+       * usuarios al cambiar el correo propio (lib/salidaIntencionada.ts).
+       *
+       * Compartirla es lo que hace que el orden entre este efecto y la pantalla
+       * deje de importar: gane quien gane, el destino es el mismo. Ver la
+       * invariante en la cabecera de ese archivo.
+       */
+      void signOut().then(() => router.replace(destinoDeSalida()));
     }
   }, [isLoading, isAuthenticated, user, router, signOut]);
 
