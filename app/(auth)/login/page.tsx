@@ -107,9 +107,25 @@ function LoginInner() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  /**
+   * Aviso de que la sesión terminó sola (KAR-112). El texto es NEUTRO a
+   * propósito y no dice por qué: es cierto tanto si la sesión se revocó o
+   * caducó como si desactivaron la cuenta —desactivar corta la sesión—, y
+   * detallar el motivo aquí chocaría con la opacidad del login (ver el catch
+   * del `signIn`, más abajo).
+   *
+   * El texto que había antes, "Tu cuenta no tiene acceso", salía sobre todo en
+   * cierres de sesión NORMALES, donde era falso. Quien decide este destino es
+   * `destinoDeSalida()` en lib/salidaIntencionada.ts; aquí solo se pinta.
+   *
+   * `disabled` es el valor ANTIGUO y se sigue aceptando durante la transición:
+   * puede quedar alguna pestaña con ese enlace ya en vuelo, y es mejor que
+   * enseñe el texto nuevo —cierto— que el viejo. Retirarlo es follow-up.
+   */
+  const motivoDeSalida = searchParams.get("error");
   const [error, setError] = useState<string | null>(
-    searchParams.get("error") === "disabled"
-      ? "Tu cuenta no tiene acceso. Contacta al administrador."
+    motivoDeSalida === "sesion" || motivoDeSalida === "disabled"
+      ? "Tu sesión se cerró. Vuelve a entrar."
       : null,
   );
 
