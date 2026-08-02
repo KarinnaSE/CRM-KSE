@@ -36,8 +36,12 @@ import { sendInvitationEmail } from "./invitationEmail";
  *
  * (b) LA CONTRASEÑA LA FIJA LA PERSONA, NO LA DUEÑA.
  *     El alta crea la cuenta SIN secreto y manda un código por correo; la
- *     persona elige su contraseña con el mismo flujo de "¿Olvidaste tu
- *     contraseña?" ya endurecido en KAR-100/KAR-110. Nadie más llega a
+ *     persona elige su contraseña reutilizando el MOTOR de recuperación ya
+ *     endurecido en KAR-100/KAR-110. Ojo: se comparte el motor, no la pantalla
+ *     — desde KAR-111 quien está invitado escribe su correo en el inicio de
+ *     sesión y le sale directamente "Configura tu contraseña", sin pasar por
+ *     "¿Olvidaste tu contraseña?", que era justo lo que no tenía sentido
+ *     pedirle a quien nunca ha tenido una. Nadie más llega a
  *     conocerla, y no hay que inventar un canal para una contraseña inicial.
  *     Comprobado contra la librería: `createAccount` acepta cuenta sin secreto
  *     y `Scrypt.verify` devuelve `false` contra un hash vacío, así que una
@@ -595,9 +599,15 @@ export const contextoReenvio = internalQuery({
       throw new ConvexError("Esa persona no tiene una cuenta de acceso.");
     }
     if (args.forzar && password.secret !== undefined) {
+      // OJO AL CAMINO QUE DESCRIBE ESTE TEXTO: desde KAR-111 el inicio de sesión
+      // pide PRIMERO el correo, y «¿Olvidaste tu contraseña?» solo aparece en el
+      // paso siguiente. Decir "en la pantalla de inicio de sesión" a secas
+      // mandaba a la dueña a buscar un enlace que ahí no está. Si el login
+      // vuelve a cambiar de forma, este mensaje hay que revisarlo.
       throw new ConvexError(
-        "Esa persona ya tiene contraseña. Si no puede entrar, que use " +
-          "«¿Olvidaste tu contraseña?» en la pantalla de inicio de sesión.",
+        "Esa persona ya tiene contraseña. Si no puede entrar, que escriba su " +
+          "correo en el inicio de sesión y pulse «¿Olvidaste tu contraseña?» " +
+          "en el paso siguiente.",
       );
     }
 
