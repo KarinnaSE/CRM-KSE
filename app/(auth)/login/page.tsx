@@ -118,13 +118,14 @@ function LoginInner() {
    * cierres de sesión NORMALES, donde era falso. Quien decide este destino es
    * `destinoDeSalida()` en lib/salidaIntencionada.ts; aquí solo se pinta.
    *
-   * `disabled` es el valor ANTIGUO y se sigue aceptando durante la transición:
-   * puede quedar alguna pestaña con ese enlace ya en vuelo, y es mejor que
-   * enseñe el texto nuevo —cierto— que el viejo. Retirarlo es follow-up.
+   * `sesion` es el ÚNICO valor que se reconoce. Hubo otro, `disabled`, que se
+   * aceptó durante un despliegue para las pestañas que quedaran en vuelo con el
+   * enlace viejo; se retiró en cuanto ese despliegue pasó, porque desde
+   * entonces nadie lo produce y un valor que se acepta pero no se emite acaba
+   * pareciendo que significa algo.
    */
-  const motivoDeSalida = searchParams.get("error");
   const [error, setError] = useState<string | null>(
-    motivoDeSalida === "sesion" || motivoDeSalida === "disabled"
+    searchParams.get("error") === "sesion"
       ? "Tu sesión se cerró. Vuelve a entrar."
       : null,
   );
