@@ -23,12 +23,34 @@ import { Button } from "@/components/ui/Button";
  * karinnase@gmail.com / Seguimiento7Azul,
  * karinnaserrano111@gmail.com / Propuesta4Verde.
  *
- * Incluye la recuperación de contraseña por código (KAR-96, rehecha en KAR-100)
- * como pasos DENTRO de esta misma pantalla (no hay ruta nueva): pedir código →
- * introducir código y nueva contraseña. Ya no se usa el flujo de reset de Convex
- * Auth, sino `api.passwordReset` (ver el motivo en convex/passwordReset.ts); como
- * ese flujo no deja sesión iniciada, al terminar se inicia sesión aquí con la
- * contraseña recién puesta y se entra a /seguimientos igual que antes.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LOGIN EN DOS PASOS (KAR-111). Primero se pide el correo y SOLO el correo;
+ * después, según lo que devuelva `passwordReset.iniciarAcceso`, se pide la
+ * contraseña o se manda a configurar la primera con un código.
+ *
+ * Existe porque antes, para poner su PRIMERA contraseña, una persona recién
+ * invitada tenía que pulsar "¿Olvidaste tu contraseña?". No había olvidado nada,
+ * y de paso se le enseñaba a pinchar enlaces de recuperación, que es el reflejo
+ * que explota el phishing.
+ *
+ * LO QUE SOSTIENE LA SEGURIDAD DE ESTA PANTALLA, y hay que respetarlo al tocarla:
+ *
+ *   1. Los tres casos no reveladores —correo desconocido, correo con contraseña
+ *      y cuenta desactivada— llevan al MISMO paso y muestran el MISMO texto. Si
+ *      alguno se separa, este formulario pasa a ser un directorio de quién tiene
+ *      cuenta en el CRM.
+ *   2. El fallo del paso de la contraseña es genérico ("Correo o contraseña
+ *      incorrectos"). Es lo que hace que una cuenta inexistente y una
+ *      desactivada se confundan con una contraseña mal escrita.
+ *   3. Si `iniciarAcceso` falla, se cae al paso de la contraseña. Fail-closed
+ *      aquí significa "la rama que no cuenta nada".
+ *
+ * Toda la recuperación por código (KAR-96, rehecha en KAR-100) sigue viviendo
+ * DENTRO de esta pantalla, no en una ruta aparte. No se usa el flujo de reset de
+ * Convex Auth sino `api.passwordReset` (ver el motivo en convex/passwordReset.ts);
+ * como ese flujo no deja sesión iniciada, al terminar se inicia sesión aquí con
+ * la contraseña recién puesta y se entra a /seguimientos.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export default function LoginPage() {
   return (
@@ -38,8 +60,25 @@ export default function LoginPage() {
   );
 }
 
-/** Pasos de la pantalla. "signIn" es el estado por defecto. */
-type Mode = "signIn" | "requestCode" | "enterCode";
+/**
+ * Pasos de la pantalla. "email" es el estado por defecto (KAR-111).
+ *
+ *   email       Solo se pide el correo. Con la respuesta de `iniciarAcceso` se
+ *               decide a cuál de los dos siguientes se va.
+ *   password    Quien ya tiene contraseña. Desde aquí sale la recuperación.
+ *   invitacion  Quien NUNCA ha tenido contraseña: código + elegir la primera.
+ *   enterCode   Recuperación de toda la vida: código + contraseña nueva.
+ *
+ * "invitacion" y "enterCode" comparten formulario y manejador —los dos llaman a
+ * `resetPassword`— y solo cambian los textos. Es a propósito: dos copias de la
+ * pantalla que fija contraseñas se desincronizarían al primer arreglo. Pero los
+ * TEXTOS no se comparten, porque el objetivo de KAR-111 es justamente que a
+ * quien entra por primera vez no se le hable de olvidar ni de recuperar nada.
+ */
+type Mode = "email" | "password" | "invitacion" | "enterCode";
+
+/** Los dos pasos que piden código. Comparten formulario, no palabras. */
+const esPasoDeCodigo = (m: Mode) => m === "invitacion" || m === "enterCode";
 
 // `CODE_LENGTH` se IMPORTA de convex/authShared.ts. Antes esta pantalla
 // declaraba su propio `const CODE_LENGTH = 6`, así que al cambiar la longitud en
@@ -58,10 +97,11 @@ function LoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { signIn } = useAuthActions();
+  const iniciarAcceso = useAction(api.passwordReset.iniciarAcceso);
   const requestCode = useAction(api.passwordReset.requestCode);
   const resetPassword = useAction(api.passwordReset.resetPassword);
 
-  const [mode, setMode] = useState<Mode>("signIn");
+  const [mode, setMode] = useState<Mode>("email");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -88,9 +128,11 @@ function LoginInner() {
   // puedan desviarse la una de la otra.
   const newPasswordProblem = passwordProblem(newPassword);
 
-  /** Vuelve al inicio de sesión limpiando el estado de la recuperación. */
-  function backToSignIn() {
-    setMode("signIn");
+  /** Vuelve al primer paso, limpiando todo lo que dependía del correo. */
+  function backToEmail() {
+    setMode("email");
+    setPassword("");
+    setShowPassword(false);
     setCode("");
     setNewPassword("");
     setShowNewPassword(false);
@@ -98,6 +140,50 @@ function LoginInner() {
     setNotice(null);
   }
 
+  /**
+   * Paso 1 — el correo, y solo el correo.
+   *
+   * `iniciarAcceso` responde "password" o "codigo". El reparto está pensado para
+   * que esta pantalla NO sea un directorio de quién tiene cuenta: un correo
+   * desconocido, uno con contraseña y uno desactivado devuelven exactamente lo
+   * mismo, así que probar direcciones al azar no distingue nada. Ver el
+   * razonamiento completo en convex/passwordReset.ts.
+   *
+   * Si la llamada falla, se va a "password". Es la caída fail-closed: es la rama
+   * que no revela nada, y quien de verdad tenga contraseña podrá entrar igual.
+   */
+  async function onSubmitEmail(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    const normalized = normalizeEmail(email);
+    if (normalized === "") {
+      setError("Escribe tu correo electrónico.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const { paso } = await iniciarAcceso({ email: normalized });
+      if (paso === "codigo") {
+        setMode("invitacion");
+        setNotice(
+          "Te hemos enviado un código a tu correo para que elijas tu contraseña.",
+        );
+      } else {
+        setMode("password");
+      }
+    } catch (e) {
+      console.error(
+        "Fallo al comprobar el acceso:",
+        e instanceof Error ? e.message : String(e),
+      );
+      setMode("password");
+    }
+    setLoading(false);
+  }
+
+  /** Paso 2a — la contraseña de quien ya la tiene. */
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (busy) return;
@@ -111,6 +197,9 @@ function LoginInner() {
       });
       router.replace("/seguimientos");
     } catch {
+      // Mensaje GENÉRICO, y de él depende media seguridad de KAR-111: es lo que
+      // hace que un correo sin cuenta y una cuenta desactivada sean
+      // indistinguibles de una contraseña mal escrita. No detallar nunca.
       setError("Correo o contraseña incorrectos.");
       setLoading(false);
     }
@@ -155,7 +244,10 @@ function LoginInner() {
    * todos los casos—, pero le cuenta a quien lo lea que estar dado de alta es un
    * requisito, que es justo lo que este flujo procura no airear.
    */
-  async function requestCodeFor(normalized: string, isResend: boolean) {
+  async function pedirCodigoDeRecuperacion(
+    normalized: string,
+    isResend: boolean,
+  ) {
     setResetLoading(true);
     setError(null);
     try {
@@ -180,8 +272,10 @@ function LoginInner() {
     // servir: desde el arreglo del hallazgo A1 una petición nueva ya NO invalida
     // un código vivo.
     setCode("");
-    if (!isResend) setNewPassword("");
-    setMode("enterCode");
+    if (!isResend) {
+      setNewPassword("");
+      setMode("enterCode");
+    }
     setNotice(
       isResend
         ? // Este mensaje decía "El anterior ya no es válido", y desde el arreglo
@@ -201,26 +295,63 @@ function LoginInner() {
     );
   }
 
-  async function onRequestCode(e: React.FormEvent) {
-    e.preventDefault();
+  /**
+   * "¿Olvidaste tu contraseña?", desde el paso de la contraseña. Aquí la frase
+   * SÍ es cierta: quien llega a este paso tiene una contraseña que olvidar.
+   *
+   * Ya no hay un paso intermedio que vuelva a pedir el correo: lo tenemos del
+   * paso 1.
+   */
+  async function onOlvideLaContrasena() {
     if (busy) return;
     const normalized = normalizeEmail(email);
     if (normalized === "") {
-      setError("Escribe tu correo electrónico.");
+      backToEmail();
       return;
     }
-    await requestCodeFor(normalized, false);
+    await pedirCodigoDeRecuperacion(normalized, false);
   }
 
-  /** Reenvía el código sin hacer volver al paso anterior. */
+  /**
+   * Reenviar, desde cualquiera de los dos pasos que piden código.
+   *
+   * OJO CON ESTA RAMA, que es fácil de "simplificar" mal: el reenvío de una
+   * INVITACIÓN no puede llamar a `requestCode`. Eso mandaría el correo de
+   * RECUPERACIÓN —con su "recupera tu contraseña" y su "si no pediste este
+   * cambio, tu contraseña actual sigue siendo válida"— a alguien que nunca ha
+   * tenido contraseña, y reintroduciría por la puerta de atrás exactamente el
+   * texto que KAR-111 viene a quitar. Se llama a `iniciarAcceso`, que es quien
+   * manda la invitación.
+   */
   async function onResendCode() {
     if (busy) return;
     const normalized = normalizeEmail(email);
     if (normalized === "") {
-      setMode("requestCode");
+      backToEmail();
       return;
     }
-    await requestCodeFor(normalized, true);
+
+    if (mode === "invitacion") {
+      setResetLoading(true);
+      setError(null);
+      try {
+        await iniciarAcceso({ email: normalized });
+      } catch (e) {
+        console.error(
+          "Fallo al reenviar la invitación:",
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+      setResetLoading(false);
+      setCode("");
+      // Cierto en los dos casos: haya salido uno nuevo o siga vivo el anterior.
+      setNotice(
+        "Revisa tu correo. Si ya te habíamos enviado un código sin usar, sigue siendo válido.",
+      );
+      return;
+    }
+
+    await pedirCodigoDeRecuperacion(normalized, true);
   }
 
   /**
@@ -285,8 +416,8 @@ function LoginInner() {
       router.replace("/seguimientos");
     } catch {
       setResetLoading(false);
-      // `backToSignIn` limpia el error, así que va ANTES de fijarlo.
-      backToSignIn();
+      // `backToEmail` limpia el error, así que va ANTES de fijarlo.
+      backToEmail();
       setError(
         "Tu contraseña se cambió correctamente, pero no pudimos iniciar tu " +
           "sesión. Inicia sesión con tu contraseña nueva.",
@@ -348,26 +479,32 @@ function LoginInner() {
 
           <div className="mb-7">
             <h1 className="text-2xl font-bold text-text-primary">
-              {mode === "signIn"
-                ? "Iniciar sesión"
-                : mode === "requestCode"
-                  ? "Recuperar contraseña"
-                  : "Introduce el código"}
+              {mode === "invitacion"
+                ? "Configura tu contraseña"
+                : mode === "enterCode"
+                  ? "Introduce el código"
+                  : "Iniciar sesión"}
             </h1>
+            {/* Los textos de "invitacion" y "enterCode" son DISTINTOS a propósito
+                aunque el formulario sea el mismo: a quien entra por primera vez
+                no se le habla de olvidar, recuperar ni restablecer nada, porque
+                no ha perdido nada. Es el motivo de ser de KAR-111. */}
             <p className="mt-1.5 text-base text-text-secondary">
-              {mode === "signIn"
-                ? "Accede a tu cuenta de KSE CRM."
-                : mode === "requestCode"
-                  ? "Te enviaremos un código a tu correo para que puedas elegir una contraseña nueva."
-                  : "Escribe el código que te enviamos y elige tu contraseña nueva."}
+              {mode === "email"
+                ? "Escribe tu correo para continuar."
+                : mode === "password"
+                  ? "Escribe tu contraseña para entrar."
+                  : mode === "invitacion"
+                    ? "Es la primera vez que entras, así que todavía no tienes contraseña. Te hemos enviado un código para que elijas la tuya."
+                    : "Escribe el código que te enviamos y elige tu contraseña nueva."}
             </p>
           </div>
 
-          {/* ─────────── Paso: iniciar sesión ─────────── */}
-          {mode === "signIn" && (
+          {/* ─────────── Paso 1: el correo, y solo el correo ─────────── */}
+          {mode === "email" && (
             <>
               <form
-                onSubmit={onSubmit}
+                onSubmit={onSubmitEmail}
                 noValidate
                 className="flex flex-col gap-[18px]"
               >
@@ -383,6 +520,7 @@ function LoginInner() {
                     id="email"
                     type="email"
                     autoComplete="username"
+                    autoFocus
                     value={email}
                     onChange={(e) => {
                       setEmail(e.target.value);
@@ -392,57 +530,6 @@ function LoginInner() {
                     placeholder="tu@correo.com"
                     className="h-10 rounded-md border border-border bg-surface px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary focus:border-interactive focus:ring-2 focus:ring-focus-ring disabled:opacity-60"
                   />
-                </div>
-
-                {/* Contraseña */}
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <label
-                      htmlFor="password"
-                      className="text-sm font-medium text-text-primary"
-                    >
-                      Contraseña
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setError(null);
-                        setNotice(null);
-                        setMode("requestCode");
-                      }}
-                      disabled={busy}
-                      className="text-sm font-medium text-interactive underline-offset-2 hover:underline disabled:opacity-60"
-                    >
-                      ¿Olvidaste tu contraseña?
-                    </button>
-                  </div>
-                  <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface focus-within:border-interactive focus-within:ring-2 focus-within:ring-focus-ring">
-                    <input
-                      id="password"
-                      type={showPassword ? "text" : "password"}
-                      autoComplete="current-password"
-                      value={password}
-                      onChange={(e) => {
-                        setPassword(e.target.value);
-                        setError(null);
-                      }}
-                      disabled={busy}
-                      placeholder="••••••••"
-                      className="h-10 min-w-0 flex-1 bg-transparent px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary disabled:opacity-60"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword((v) => !v)}
-                      aria-label={
-                        showPassword
-                          ? "Ocultar contraseña"
-                          : "Mostrar contraseña"
-                      }
-                      className="flex h-10 w-10 shrink-0 items-center justify-center text-text-tertiary hover:text-text-secondary"
-                    >
-                      {showPassword ? <EyeOffIcon /> : <EyeIcon />}
-                    </button>
-                  </div>
                 </div>
 
                 {error && <ErrorBanner message={error} />}
@@ -456,10 +543,10 @@ function LoginInner() {
                 >
                   {loading ? (
                     <>
-                      <Spinner /> Verificando…
+                      <Spinner /> Comprobando…
                     </>
                   ) : (
-                    "Iniciar sesión"
+                    "Continuar"
                   )}
                 </Button>
               </form>
@@ -511,34 +598,91 @@ function LoginInner() {
             </>
           )}
 
-          {/* ─────────── Paso: pedir el código ─────────── */}
-          {mode === "requestCode" && (
+          {/* ─────────── Paso 2a: la contraseña ─────────── */}
+          {mode === "password" && (
             <form
-              onSubmit={onRequestCode}
+              onSubmit={onSubmit}
               noValidate
               className="flex flex-col gap-[18px]"
             >
+              {/* EL CAMPO DE CORREO SIGUE AQUÍ, y no es decorativo.
+                  Un login en dos pasos rompe los gestores de contraseñas si el
+                  formulario de la contraseña no lleva también el usuario: muchos
+                  dejan de ofrecer el autorrelleno o guardan la entrada sin saber
+                  a quién pertenece. Va de solo lectura, en el mismo <form> que la
+                  contraseña y con autoComplete="username", que es lo que esperan.
+                  Para cambiarlo está el botón de al lado. */}
               <div className="flex flex-col gap-1">
-                <label
-                  htmlFor="reset-email"
-                  className="text-sm font-medium text-text-primary"
-                >
-                  Correo electrónico
-                </label>
+                <div className="flex items-baseline justify-between gap-3">
+                  <label
+                    htmlFor="email-fijo"
+                    className="text-sm font-medium text-text-primary"
+                  >
+                    Correo electrónico
+                  </label>
+                  <button
+                    type="button"
+                    onClick={backToEmail}
+                    disabled={busy}
+                    className="text-sm font-medium text-interactive underline-offset-2 hover:underline disabled:opacity-60"
+                  >
+                    Cambiar
+                  </button>
+                </div>
                 <input
-                  id="reset-email"
+                  id="email-fijo"
                   type="email"
                   autoComplete="username"
-                  autoFocus
                   value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    setError(null);
-                  }}
-                  disabled={busy}
-                  placeholder="tu@correo.com"
-                  className="h-10 rounded-md border border-border bg-surface px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary focus:border-interactive focus:ring-2 focus:ring-focus-ring disabled:opacity-60"
+                  readOnly
+                  className="h-10 rounded-md border border-border bg-surface-2 px-3 text-base text-text-secondary outline-none"
                 />
+              </div>
+
+              {/* Contraseña */}
+              <div className="flex flex-col gap-1">
+                <div className="flex items-baseline justify-between gap-3">
+                  <label
+                    htmlFor="password"
+                    className="text-sm font-medium text-text-primary"
+                  >
+                    Contraseña
+                  </label>
+                  <button
+                    type="button"
+                    onClick={onOlvideLaContrasena}
+                    disabled={busy}
+                    className="text-sm font-medium text-interactive underline-offset-2 hover:underline disabled:opacity-60"
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                </div>
+                <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface focus-within:border-interactive focus-within:ring-2 focus-within:ring-focus-ring">
+                  <input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    autoFocus
+                    value={password}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      setError(null);
+                    }}
+                    disabled={busy}
+                    placeholder="••••••••"
+                    className="h-10 min-w-0 flex-1 bg-transparent px-3 text-base text-text-primary outline-none placeholder:text-text-tertiary disabled:opacity-60"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label={
+                      showPassword ? "Ocultar contraseña" : "Mostrar contraseña"
+                    }
+                    className="flex h-10 w-10 shrink-0 items-center justify-center text-text-tertiary hover:text-text-secondary"
+                  >
+                    {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+                  </button>
+                </div>
               </div>
 
               {error && <ErrorBanner message={error} />}
@@ -549,28 +693,22 @@ function LoginInner() {
                 disabled={busy}
                 className="mt-1 h-12 w-full text-base"
               >
-                {resetLoading ? (
+                {loading || resetLoading ? (
                   <>
-                    <Spinner /> Enviando…
+                    <Spinner /> Verificando…
                   </>
                 ) : (
-                  "Enviarme el código"
+                  "Iniciar sesión"
                 )}
               </Button>
-
-              <button
-                type="button"
-                onClick={backToSignIn}
-                disabled={busy}
-                className="text-sm font-medium text-text-secondary underline-offset-2 hover:underline disabled:opacity-60"
-              >
-                Volver al inicio de sesión
-              </button>
             </form>
           )}
 
-          {/* ─────────── Paso: código + contraseña nueva ─────────── */}
-          {mode === "enterCode" && (
+          {/* ─────────── Paso 2b: código + contraseña ───────────
+              Un solo formulario para la invitación y para la recuperación: los
+              dos llaman a `resetPassword` y comparten toda la lógica. Lo único
+              que se bifurca son las palabras. */}
+          {esPasoDeCodigo(mode) && (
             <form
               onSubmit={onVerifyCode}
               noValidate
@@ -623,7 +761,7 @@ function LoginInner() {
                   htmlFor="new-password"
                   className="text-sm font-medium text-text-primary"
                 >
-                  Contraseña nueva
+                  {mode === "invitacion" ? "Tu contraseña" : "Contraseña nueva"}
                 </label>
                 <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface focus-within:border-interactive focus-within:ring-2 focus-within:ring-focus-ring">
                   <input
@@ -671,6 +809,8 @@ function LoginInner() {
                   <>
                     <Spinner /> Guardando…
                   </>
+                ) : mode === "invitacion" ? (
+                  "Guardar contraseña y entrar"
                 ) : (
                   "Cambiar contraseña y entrar"
                 )}
@@ -687,7 +827,7 @@ function LoginInner() {
                 </button>
                 <button
                   type="button"
-                  onClick={backToSignIn}
+                  onClick={backToEmail}
                   disabled={busy}
                   className="text-sm font-medium text-text-secondary underline-offset-2 hover:underline disabled:opacity-60"
                 >

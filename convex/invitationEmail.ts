@@ -102,11 +102,11 @@ export function buildInvitationEmail({
       `Cómo usarlo:\n` +
       `1. Abre la pantalla de inicio de sesión de KSE CRM.` +
       (urlLogin === null ? "" : `\n   ${urlLogin}`) +
-      `\n2. Pulsa "¿Olvidaste tu contraseña?".\n` +
-      `3. Escribe tu correo y pega el código.\n` +
+      `\n2. Escribe tu correo y pulsa Continuar.\n` +
+      `3. Te pediremos el código de arriba.\n` +
       `4. Elige tu contraseña. Solo la conocerás tú.\n\n` +
-      `El código caduca en ${horas} horas. Si se te pasa, puedes pedir otro tú ` +
-      `misma desde "¿Olvidaste tu contraseña?", sin tener que avisar a nadie.\n\n` +
+      `El código caduca en ${horas} horas. Si se te pasa, vuelve a escribir tu ` +
+      `correo en esa misma pantalla y te enviaremos otro.\n\n` +
       `Si no esperabas este correo, ignóralo: sin el código nadie puede entrar ` +
       `en la cuenta.`,
     html: emailShell({
@@ -122,12 +122,12 @@ export function buildInvitationEmail({
       </p>
       <ol style="margin:8px 0 0;padding-left:20px;font-size:15px;line-height:1.7;color:#555555;">
         <li>Abre ${enlaceHtml}.</li>
-        <li>Pulsa &laquo;&iquest;Olvidaste tu contrase&ntilde;a?&raquo;.</li>
-        <li>Escribe tu correo y pega el c&oacute;digo.</li>
+        <li>Escribe tu correo y pulsa <strong>Continuar</strong>.</li>
+        <li>Te pediremos el c&oacute;digo de arriba.</li>
         <li>Elige tu contrase&ntilde;a. Solo la conocer&aacute;s t&uacute;.</li>
       </ol>
       <p style="margin:22px 0 0;font-size:14px;line-height:1.6;color:#777777;">
-        El código caduca en <strong>${horas} horas</strong>. Si se te pasa, puedes pedir otro tú misma desde &laquo;&iquest;Olvidaste tu contrase&ntilde;a?&raquo;, sin tener que avisar a nadie.
+        El código caduca en <strong>${horas} horas</strong>. Si se te pasa, vuelve a escribir tu correo en esa misma pantalla y te enviaremos otro.
       </p>
       <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#999999;">
         Si no esperabas este correo, ignóralo: sin el código nadie puede entrar en la cuenta.
