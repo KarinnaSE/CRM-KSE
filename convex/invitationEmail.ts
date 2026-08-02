@@ -153,5 +153,9 @@ export async function sendInvitationEmail(
     console.info(`[dev] código de invitación para ${to}: ${code}`);
   }
 
-  await sendEmail(to, buildInvitationEmail({ nombre, code, urlLogin: loginUrl() }));
+  await sendEmail(
+    to,
+    buildInvitationEmail({ nombre, code, urlLogin: loginUrl() }),
+    "invitación",
+  );
 }

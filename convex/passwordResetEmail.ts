@@ -103,5 +103,5 @@ export async function sendResetCodeEmail(
 
   // Fail-closed: si Resend no acepta el envío, `sendEmail` lanza y el flujo
   // falla, en vez de dejar a la usuaria esperando un correo que nunca llegará.
-  await sendEmail(to, buildResetCodeEmail(code));
+  await sendEmail(to, buildResetCodeEmail(code), "recuperación");
 }

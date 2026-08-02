@@ -143,8 +143,23 @@ const VERIFY_REFILL_WINDOW_MS = 10 * 60 * 1000;
  * Mensaje ÚNICO para todos los fallos de verificación. Que sea el mismo para
  * "no hay código", "caducado", "sin intentos", "código incorrecto" y "ese correo
  * no tiene cuenta" evita que la pantalla se convierta en un oráculo.
+ *
+ * EL TEXTO NOMBRA LAS DOS CAUSAS POSIBLES (KAR-116), y no es un adorno. El
+ * anterior —"El código no es válido o ha caducado."— solo hablaba del código, y
+ * este mismo mensaje se lanza cuando quien falla es el CORREO: si la dirección no
+ * corresponde a una cuenta activa con contraseña, se sale AQUÍ, antes de mirar el
+ * código siquiera. Pasó en producción el 2 de agosto: un código perfectamente
+ * válido y sin estrenar recibió un "ha caducado" porque el correo del formulario
+ * no era el suyo, y ese correo ni se veía en pantalla.
+ *
+ * Nombrar las dos causas NO abre ningún oráculo: sigue siendo UN SOLO texto para
+ * todos los casos, así que no distingue nada. Lo único que cambia es que ahora
+ * apunta a los dos sitios donde mirar en vez de a uno solo, y uno de ellos era el
+ * equivocado la mitad de las veces.
  */
-const INVALID_CODE = "El código no es válido o ha caducado.";
+const INVALID_CODE =
+  "No pudimos verificar el código. Comprueba que el correo de arriba sea el " +
+  "tuyo; si el código ha caducado, pide uno nuevo.";
 
 /**
  * Los fallos PREVISTOS de este archivo se lanzan como `ConvexError` (KAR-98).
@@ -260,7 +275,7 @@ export const requestCode = action({
     //    aplica la regla del código sagrado y la cuota; aquí no se decide nada.
     const code = generateNumericCode();
     const codeHash = await hashCode(code);
-    const { enviar } = await ctx.runMutation(
+    const resultado = await ctx.runMutation(
       internal.passwordReset.prepararEnvio,
       {
         accountId: account._id,
@@ -276,13 +291,29 @@ export const requestCode = action({
         forzarPorDuena: false,
       },
     );
-    // Del resultado se lee SOLO `enviar`. `motivo` y `expiresAt` existen para la
-    // dueña autenticada y no pueden salir por aquí: esta action devuelve `null`
-    // pase lo que pase, y decir por qué convertiría la pantalla en un oráculo de
-    // qué correos tienen cuenta.
-    // Si no toca enviar, el código recién generado se descarta sin más: nunca
-    // llegó a guardarse ni a salir de aquí.
-    if (!enviar) return null;
+    // A QUIEN LLAMA se le devuelve SOLO el silencio. `motivo` y `expiresAt`
+    // existen para la dueña autenticada y no pueden salir por aquí: esta action
+    // devuelve `null` pase lo que pase, y decir por qué convertiría la pantalla
+    // en un oráculo de qué correos tienen cuenta.
+    //
+    // AL REGISTRO DEL DEPLOYMENT sí va el motivo (KAR-116). Son dos públicos
+    // distintos: el registro solo lo lee la dueña en el panel de Convex, así que
+    // no abre ningún oráculo, y es exactamente el dato que faltaba el día que
+    // "no llega el correo" resultó ser "no se envió ninguno, y con razón". Sin
+    // esta línea, no enviar por código vivo y enviar correctamente dejan el mismo
+    // rastro: ninguno.
+    //
+    // Se registra el `_id` de la cuenta, no el correo: para cruzarlo con las
+    // tablas sirve igual y no reparte direcciones por los registros.
+    if (!resultado.enviar) {
+      console.info(
+        `[passwordReset] No se emite código para la cuenta ${account._id} ` +
+          `(motivo: ${resultado.motivo}). No sale ningún correo.`,
+      );
+      // El código recién generado se descarta sin más: nunca llegó a guardarse
+      // ni a salir de aquí.
+      return null;
+    }
 
     // 4) Enviar, a la dirección ALMACENADA en la cuenta, nunca a la cadena que
     //    escribió quien llamó.

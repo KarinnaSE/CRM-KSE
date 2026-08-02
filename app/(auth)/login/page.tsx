@@ -742,6 +742,41 @@ function LoginInner() {
                 </div>
               )}
 
+              {/**
+               * EL CORREO, A LA VISTA (KAR-116).
+               *
+               * Este paso operaba sobre un correo INVISIBLE: se escribió en el
+               * paso 1 y desde entonces no aparecía por ningún sitio, aunque es
+               * la mitad de lo que se envía a `resetPassword`. Cuando el que
+               * fallaba era el correo, la pantalla acusaba al código —el backend
+               * responde lo mismo en los dos casos a propósito— y no había forma
+               * de darse cuenta. Ocurrió en producción el 2 de agosto: un código
+               * válido y sin estrenar recibió un "ha caducado".
+               *
+               * Va ARRIBA DEL TODO, antes del campo del código, porque el
+               * mensaje de fallo del backend dice "el correo de arriba". Si algún
+               * día este bloque se mueve debajo, hay que cambiar aquel texto.
+               *
+               * No revela nada: es el correo que acaba de escribir quien está
+               * mirando la pantalla.
+               */}
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-surface-2 px-3.5 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-xs text-text-tertiary">Código enviado a</p>
+                  <p className="truncate text-sm font-medium text-text-primary">
+                    {normalizeEmail(email)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={backToEmail}
+                  disabled={busy}
+                  className="shrink-0 rounded-md px-2 py-1 text-sm font-medium text-interactive underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Usar otro correo
+                </button>
+              </div>
+
               {/* Código */}
               <div className="flex flex-col gap-1">
                 <label
