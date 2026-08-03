@@ -43,17 +43,17 @@ type Rol = "duena" | "vendedor";
  * `reintentable` NO es cosmético: decide si se pinta un botón que vuelve a
  * llamar a `reenviarInvitacion`, y eso puede MANDAR UN CORREO.
  *
- * El motivo está en la asimetría del backend, que hay que tener delante al tocar
- * esto. `contextoReenvio` solo rechaza una cuenta que ya tiene contraseña cuando
- * `forzar` es cierto (`convex/users.ts`, "if (args.forzar && password.secret
- * !== undefined)"), y `prepararEnvio` solo comprueba el secreto cuando
- * `forzarPorDuena` es cierto. O sea que una llamada con `forzar: false` NO está
- * guardada contra ese caso: si no queda código vivo, emite y envía.
+ * Que una cuenta ya tenga contraseña es un estado TERMINAL para la invitación, y
+ * desde M1 lo garantiza el BACKEND, no esta pantalla. `contextoReenvio` rechaza
+ * ese caso siempre —forzado o no— con un ConvexError, y `prepararEnvio` no emite
+ * si `exigirSinSecreto` y la cuenta tiene `secret` (ver
+ * `convex/passwordReset.ts`). O sea que un "Reintentar" sobre esa cuenta no
+ * podría mandar nada aunque se pulsara.
  *
- * Así que cuando el backend ya nos ha DICHO que esa persona tiene contraseña,
- * ofrecer un "Reintentar" —que llama con `forzar: false`— le mandaría una
- * invitación a alguien que no la necesita, con un código para cambiar la
- * contraseña que ya tiene. Ese estado es TERMINAL y no lleva acción.
+ * Aun así aquí se marca terminal —`reintentable: false` para el motivo
+ * `no_forzable` y para cualquier ConvexError— por dos razones: no ofrecer una
+ * acción que el backend va a rechazar, y no reintentar estados de cuenta que no
+ * se arreglan solos (a diferencia de `cuota`/`correo`, que sí son pasajeros).
  */
 type Reenvio =
   | { estado: "inerte" }
@@ -150,6 +150,15 @@ export function UsuarioModal({
   const [reenvio, setReenvio] = useState<Reenvio>({ estado: "inerte" });
   /** Confirmación previa al cambio de correo propio. Ver el bloque de §8. */
   const [confirmarCorreoPropio, setConfirmarCorreoPropio] = useState(false);
+  /**
+   * Doble tecleo del correo nuevo, SOLO para el cambio de correo propio (M2). El
+   * disparador real del autobloqueo de la dueña es un error de tecleo, y escribir
+   * la dirección dos veces es lo que lo ataja. Se compara SIEMPRE contra el correo
+   * NORMALIZADO que irá al backend, no contra el texto crudo del input, para no
+   * dar por distinto un correo que solo cambia en mayúsculas o espacios.
+   */
+  const [correoConfirmacion, setCorreoConfirmacion] = useState("");
+  const [errorConfirmacion, setErrorConfirmacion] = useState<string | null>(null);
 
   const correoNormalizado = normalizeEmail(correo);
   const cambiaSuPropioCorreo =
@@ -195,11 +204,26 @@ export function UsuarioModal({
     const valido = validar();
     if (valido === null) return;
 
-    // Cambiarse el correo a una misma cierra la sesión. Se avisa ANTES, y este
-    // submit no guarda: pinta la confirmación y espera.
+    // Cambiarse el correo a una misma cierra la sesión y ata la recuperación al
+    // correo nuevo. Se avisa ANTES, y este submit no guarda: pinta la
+    // confirmación —con su segundo campo— y espera.
     if (esEdicion && cambiaSuPropioCorreo && !confirmarCorreoPropio) {
       setConfirmarCorreoPropio(true);
+      setErrorConfirmacion(null);
       return;
+    }
+
+    // Segundo submit del cambio de correo propio: el correo tecleado abajo tiene
+    // que coincidir con el de arriba, ya normalizados los dos. Si no, no se
+    // guarda nada — es justo el error de tecleo que podría dejar fuera a la dueña.
+    if (esEdicion && cambiaSuPropioCorreo && confirmarCorreoPropio) {
+      if (normalizeEmail(correoConfirmacion) !== correoNormalizado) {
+        setErrorConfirmacion(
+          "Los dos correos no coinciden. Vuelve a escribir el nuevo para confirmarlo.",
+        );
+        return;
+      }
+      setErrorConfirmacion(null);
     }
 
     setSaving(true);
@@ -384,15 +408,67 @@ export function UsuarioModal({
         {confirmarCorreoPropio && (
           <div
             role="status"
-            className="rounded-md border border-warning-100 bg-warning-50 p-3 text-sm text-text-primary"
+            className="flex flex-col gap-3 rounded-md border border-warning-100 bg-warning-50 p-3 text-sm text-text-primary"
           >
-            <p className="font-semibold">
-              Vas a cambiar tu correo a {correoNormalizado}.
-            </p>
-            <p className="mt-1 text-text-secondary">
-              Se cerrará tu sesión y tendrás que volver a entrar con la dirección
-              nueva. Tu contraseña es la misma.
-            </p>
+            <div>
+              <p className="font-semibold">
+                Vas a cambiar tu correo a {correoNormalizado}.
+              </p>
+              {/* Los TRES efectos, no solo el cierre de sesión (M2). El correo
+                  nuevo pasa a ser el usuario Y el único destino de la
+                  recuperación, y Google se desvincula: callarlo dejaba a la
+                  dueña a un error de tecleo de quedarse fuera. */}
+              <ul className="mt-1.5 list-disc space-y-1 pl-5 text-text-secondary">
+                <li>Se cerrará tu sesión y tendrás que volver a entrar.</li>
+                <li>
+                  Esa dirección será tu usuario y también a donde llegaría
+                  cualquier recuperación de contraseña, así que tiene que ser un
+                  correo al que de verdad tengas acceso.
+                </li>
+                <li>
+                  Si entras con «Continuar con Google», se desvincula: tendrás
+                  que volver a hacerlo con el correo nuevo, y solo funcionará si
+                  esa dirección es una cuenta de Google.
+                </li>
+                <li>Tu contraseña sigue siendo la misma.</li>
+              </ul>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="usr-correo-confirmar" className={labelClass}>
+                Escribe otra vez el correo nuevo para confirmarlo
+              </label>
+              <input
+                id="usr-correo-confirmar"
+                type="email"
+                value={correoConfirmacion}
+                onChange={(e) => {
+                  setCorreoConfirmacion(e.target.value);
+                  if (errorConfirmacion !== null) setErrorConfirmacion(null);
+                }}
+                placeholder="correo@ejemplo.com"
+                disabled={saving}
+                autoComplete="off"
+                aria-invalid={errorConfirmacion !== null || undefined}
+                aria-describedby={
+                  errorConfirmacion !== null
+                    ? "usr-correo-confirmar-error"
+                    : undefined
+                }
+                className={cn(
+                  fieldClass,
+                  errorConfirmacion !== null && "border-error-500",
+                )}
+              />
+              {errorConfirmacion !== null && (
+                <p
+                  id="usr-correo-confirmar-error"
+                  className="text-sm text-error-600"
+                >
+                  {errorConfirmacion}
+                </p>
+              )}
+            </div>
           </div>
         )}
 
@@ -409,6 +485,8 @@ export function UsuarioModal({
             onClick={() => {
               if (confirmarCorreoPropio) {
                 setConfirmarCorreoPropio(false);
+                setCorreoConfirmacion("");
+                setErrorConfirmacion(null);
                 return;
               }
               onCerrar();

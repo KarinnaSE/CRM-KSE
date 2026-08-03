@@ -283,6 +283,11 @@ export const requestCode = action({
         codeHash,
         expiresAt: Date.now() + CODE_TTL_MS,
         attemptsLeft: MAX_VERIFY_ATTEMPTS,
+        // RECUPERACIÓN: emite para cuentas que SÍ tienen contraseña, así que la
+        // guarda de invitación NO aplica aquí. `accountByEmail` de arriba ya
+        // acotó por `active`; quién tiene contraseña es justo a quien va dirigido
+        // este camino.
+        exigirSinSecreto: false,
         // NUNCA `true` aquí. Este es el camino ANÓNIMO: si desde aquí se pudiera
         // forzar, cualquiera podría volver a rotar el código de una víctima, que
         // es el fallo que cerró la ronda anterior. El forzado es exclusivo de
@@ -421,6 +426,10 @@ export const iniciarAcceso = action({
           codeHash,
           expiresAt: Date.now() + INVITE_TTL_MS,
           attemptsLeft: MAX_VERIFY_ATTEMPTS,
+          // INVITACIÓN: solo cuentas sin contraseña. Aquí ya se comprobó
+          // `sinContrasena` arriba, pero se declara igual — la garantía es de
+          // `prepararEnvio`, no de este precheck en otra transacción.
+          exigirSinSecreto: true,
           forzarPorDuena: false, // NUNCA true: esto es el camino anónimo.
         },
       );
@@ -620,18 +629,26 @@ export const accountByEmail = internalQuery({
  * mutations distintas y por tanto en transacciones distintas.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * SOBRE `forzarPorDuena` (KAR-54). Es la ÚNICA excepción a "un código vivo es
- * sagrado", y está acotada para que no valga como arma:
+ * DOS ARGUMENTOS QUE SE REPARTEN LA DEFENSA, y conviene no confundirlos.
  *
- *   - Es un argumento OBLIGATORIO, no opcional con valor por defecto. Así cada
- *     punto de llamada tiene que declarar explícitamente qué es, y añadir uno
- *     nuevo obliga a pensarlo. `requestCode` —el camino anónimo— pasa `false`.
- *   - Quien puede ponerlo en `true` es `users.reenviarInvitacion`, que exige
- *     `requireOwner` y ADEMÁS comprueba que esa cuenta todavía no tiene
- *     contraseña. O sea que este camino nunca puede destruir el código de
- *     recuperación de alguien que sí tiene contraseña, que es exactamente el
- *     caso que la ronda de auditoría protegía. Quien ya tiene contraseña no
- *     necesita invitación: tiene "¿Olvidaste tu contraseña?".
+ * `exigirSinSecreto` (M1) es la autoridad de "una invitación SOLO emite sobre
+ * cuentas sin contraseña". Se comprueba en el paso (0), en ESTA transacción, y es
+ * quien de verdad garantiza que reenviar una invitación no pueda tocar el secreto
+ * de nadie. La comprobación que hace `users.reenviarInvitacion` en otra
+ * transacción es para el MENSAJE, no la garantía.
+ *
+ * `forzarPorDuena` (KAR-54) es otra cosa: la ÚNICA excepción a "un código vivo es
+ * sagrado", para poder reemitir una invitación cuando la anterior se perdió antes
+ * de caducar. Está acotada para que no valga como arma:
+ *
+ *   - Es OBLIGATORIO, sin valor por defecto, igual que `exigirSinSecreto`: cada
+ *     punto de llamada declara explícitamente qué es. `requestCode` —el camino
+ *     anónimo— pasa `false`.
+ *   - Solo lo pone en `true` `users.reenviarInvitacion`, que exige `requireOwner`.
+ *     Y todo forzado viaja con `exigirSinSecreto:true`, así que la guarda (0) ya
+ *     impide que este camino destruya el código de recuperación de quien sí tiene
+ *     contraseña —el caso que la ronda de auditoría protegía—; el backstop (0-bis)
+ *     lo repite por si un emisor futuro rompiera esa correspondencia.
  *   - Existe porque el código de invitación dura 24 h (ver INVITE_TTL_MS en
  *     convex/authShared.ts). Sin él, un correo que se quede en la cuarentena de
  *     un antivirus dejaría a esa persona un día entero sin poder entrar y sin
@@ -649,21 +666,46 @@ export const prepararEnvio = internalMutation({
     codeHash: v.string(),
     expiresAt: v.number(),
     attemptsLeft: v.number(),
+    // OBLIGATORIO, y separa los DOS públicos de esta mutation. El camino de
+    // INVITACIÓN (crear/reenviar de convex/users.ts, iniciarAcceso) solo tiene
+    // sentido sobre cuentas SIN contraseña, y pasa `true`. El de RECUPERACIÓN
+    // (`requestCode`, «¿Olvidaste tu contraseña?») emite justamente para cuentas
+    // que SÍ la tienen, y pasa `false`. Es `boolean` sin valor por defecto a
+    // propósito: cualquier emisor nuevo tiene que declarar cuál de los dos es, en
+    // vez de heredar en silencio el que no le corresponde.
+    exigirSinSecreto: v.boolean(),
     forzarPorDuena: v.boolean(),
   },
   handler: async (ctx, args) => {
     const ahora = Date.now();
 
-    // 0) GUARDA ATÓMICA DEL FORZADO. `users.reenviarInvitacion` ya comprueba lo
-    //    mismo para dar un mensaje decente, pero lo hace en OTRA transacción.
-    //    Repetirlo aquí es lo que convierte la restricción en una garantía: sea
-    //    quien sea quien llame, y pase lo que pase entre medias, solo se puede
-    //    forzar sobre una cuenta que todavía NO tiene contraseña. Así este
-    //    camino no puede destruir el código de recuperación de alguien que sí la
-    //    tiene, que es el caso que la ronda de auditoría protegía.
+    // 0) GUARDA ATÓMICA DE LA INVITACIÓN (M1). Una invitación NUNCA puede emitir
+    //    sobre una cuenta que ya tiene contraseña, forzada o no. La comprobación
+    //    va aquí, en la MISMA transacción que el insert, porque es el único punto
+    //    donde comprobar y emitir no se pueden separar: `contextoReenvio` da el
+    //    mensaje temprano, pero corre en otra transacción y entre medias esa
+    //    persona puede configurar su contraseña con el modal abierto. Sin esto,
+    //    `reenviarInvitacion({ forzar:false })` emitía un código de invitación
+    //    utilizable —cambiaba la contraseña ya existente— sobre esa cuenta.
+    //    `forzarPorDuena:true` viaja siempre con `exigirSinSecreto:true` (es un
+    //    camino de invitación), así que esta guarda cubre también el forzado.
+    if (args.exigirSinSecreto) {
+      const cuenta = await ctx.db.get(args.accountId);
+      // Fail-closed: si la cuenta no existe o ya tiene secreto, no se emite.
+      if (cuenta === null || cuenta.secret !== undefined) {
+        return { enviar: false as const, motivo: "no_forzable" as const };
+      }
+    }
+
+    // 0-bis) BACKSTOP DEL FORZADO. Redundante con (0) mientras todo forzado sea
+    //    invitación —y lo es—, pero se conserva por defensa en profundidad: si un
+    //    emisor futuro pusiera `forzarPorDuena:true` sin `exigirSinSecreto`, el
+    //    override de código vivo no podría destruir el código de recuperación de
+    //    una cuenta con contraseña. Devuelve EXACTAMENTE el mismo `no_forzable`
+    //    que (0), así que no hay dos salidas distintas para la misma cuenta con
+    //    secreto (condición del auditor).
     if (args.forzarPorDuena) {
       const cuenta = await ctx.db.get(args.accountId);
-      // Fail-closed: si la cuenta no existe o ya tiene secreto, no se fuerza.
       if (cuenta === null || cuenta.secret !== undefined) {
         return { enviar: false as const, motivo: "no_forzable" as const };
       }
