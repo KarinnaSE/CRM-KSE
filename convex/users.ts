@@ -421,6 +421,10 @@ async function enviarInvitacion(
       codeHash,
       expiresAt: Date.now() + INVITE_TTL_MS,
       attemptsLeft: MAX_VERIFY_ATTEMPTS,
+      // Este es EL camino de invitación (lo usan `crear` y `reenviarInvitacion`,
+      // forzado o no). Solo puede emitir sobre cuentas sin contraseña, y esa es
+      // ahora la garantía atómica de `prepararEnvio` (M1), no solo la UI.
+      exigirSinSecreto: true,
       forzarPorDuena: forzar,
     },
   );
@@ -614,7 +618,14 @@ export const contextoReenvio = internalQuery({
     if (password === null) {
       throw new ConvexError("Esa persona no tiene una cuenta de acceso.");
     }
-    if (args.forzar && password.secret !== undefined) {
+    if (password.secret !== undefined) {
+      // SIN condicionar a `forzar` (M1). Reenviar una invitación NO tiene ningún
+      // significado sobre quien ya tiene contraseña —forzado o no—, y el backend
+      // ya no la emite en ninguno de los dos casos (ver `prepararEnvio`,
+      // `exigirSinSecreto`). Este mensaje temprano evita gastar la llamada y le
+      // dice a la dueña la verdad: esa persona no necesita invitación, tiene
+      // recuperación.
+      //
       // OJO AL CAMINO QUE DESCRIBE ESTE TEXTO: desde KAR-111 el inicio de sesión
       // pide PRIMERO el correo, y «¿Olvidaste tu contraseña?» solo aparece en el
       // paso siguiente. Decir "en la pantalla de inicio de sesión" a secas
