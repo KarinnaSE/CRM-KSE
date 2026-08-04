@@ -1,13 +1,13 @@
+import { redirect } from "next/navigation";
+
 /**
- * Pantalla / panel: Perfil — accesible desde la navegación persistente.
- * Muestra nombre y rol del usuario; permite cerrar sesión (→ /login).
- * Diseño: Design/…/Perfil.dc.html · Linear: KAR-56.
+ * El Perfil NO es una pantalla: es un panel persistente que abre el AppShell
+ * desde el avatar (escritorio) y la pestaña "Perfil" (móvil) — así lo define el
+ * diseño KAR-48 y así cumple KAR-56. Esta ruta existió como placeholder y no la
+ * enlaza nadie; se conserva solo como redirección de cortesía para que un
+ * marcador viejo a /perfil no aterrice en un stub, sino en la app. El middleware
+ * sigue protegiéndola: sin sesión, /perfil → /login antes de llegar aquí.
  */
 export default function PerfilPage() {
-  return (
-    <section className="mx-auto max-w-xl p-6">
-      <h1 className="text-2xl font-bold text-text-primary">Perfil</h1>
-      <p className="mt-2 text-base text-text-secondary">Pendiente de construir.</p>
-    </section>
-  );
+  redirect("/seguimientos");
 }
