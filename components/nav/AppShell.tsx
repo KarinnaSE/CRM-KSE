@@ -7,8 +7,8 @@ import { useConvexAuth } from "@convex-dev/auth/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
-import { Button } from "@/components/ui/Button";
 import { useCurrentUser } from "@/components/auth/CurrentUserProvider";
+import { ProfilePanel } from "@/components/nav/ProfilePanel";
 import {
   destinoDeSalida,
   limpiarSalidaIntencionada,
@@ -33,6 +33,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { signOut } = useAuthActions();
   const [profileOpen, setProfileOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  // El panel se cierra al navegar: si el usuario abre el perfil y cambia de
+  // pestaña, no debe quedar flotando sobre la pantalla nueva. En el cierre de
+  // sesión no importa (navegamos a /login, fuera de este layout, y el AppShell
+  // se desmonta entero).
+  useEffect(() => {
+    setProfileOpen(false);
+  }, [pathname]);
 
   /**
    * Al montar el chrome con una usuaria activa se limpia la marca de salida
@@ -72,9 +81,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [isLoading, isAuthenticated, user, router, signOut]);
 
   async function handleLogout() {
+    // Guarda de re-entrada: dos clics en "Cerrar sesión" no lanzan dos salidas.
+    // El botón ya se deshabilita con `loggingOut`, pero esto lo cierra también
+    // por si el evento llega por otra vía (teclado repetido).
+    if (loggingOut) return;
+    setLoggingOut(true);
     // La marca va ANTES del `await`: a partir de aquí no hay ningún instante en
     // que el efecto de arriba pueda ver la sesión caída sin saber que esta
     // salida la pidió ella. Sin esto, cerrar sesión enseñaba un error falso.
+    // `loggingOut` es solo UI: NO altera este orden (marcar→signOut→replace).
     marcarSalidaIntencionada();
     await signOut();
     router.replace(destinoDeSalida());
@@ -125,7 +140,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={() => setProfileOpen((v) => !v)}
-            aria-label="Abrir perfil"
+            aria-label="Abrir menú de perfil"
+            aria-haspopup="dialog"
+            aria-expanded={profileOpen}
           >
             <Avatar name={user.name ?? "?"} size="sm" />
           </button>
@@ -160,6 +177,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <button
           type="button"
           onClick={() => setProfileOpen(true)}
+          aria-label="Abrir menú de perfil"
+          aria-haspopup="dialog"
+          aria-expanded={profileOpen}
           className="flex flex-col items-center gap-0.5 text-text-tertiary"
         >
           <UserIcon />
@@ -172,6 +192,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           onClose={() => setProfileOpen(false)}
           user={user}
           onLogout={handleLogout}
+          loggingOut={loggingOut}
         />
       )}
     </div>
@@ -288,76 +309,6 @@ function BellInert() {
   );
 }
 
-/* ───────────── Panel de Perfil ───────────── */
-
-function ProfilePanel({
-  user,
-  onClose,
-  onLogout,
-}: {
-  user: NonNullable<ReturnType<typeof useCurrentUser>["user"]>;
-  onClose: () => void;
-  onLogout: () => void | Promise<void>;
-}) {
-  const isOwner = user.role === "duena";
-  return (
-    <>
-      <div
-        className="fixed inset-0 z-40 bg-black/30"
-        onClick={onClose}
-        aria-hidden
-      />
-      <div
-        role="dialog"
-        aria-label="Perfil"
-        className={cn(
-          "fixed z-50 border border-border bg-surface shadow-lg",
-          // Móvil: bottom-sheet. Escritorio: dropdown arriba a la derecha.
-          "inset-x-0 bottom-0 rounded-t-xl p-5",
-          "md:inset-x-auto md:bottom-auto md:right-4 md:top-16 md:w-72 md:rounded-xl",
-        )}
-      >
-        <div className="flex items-center gap-3">
-          <Avatar name={user.name ?? "?"} size="xl" />
-          <div className="min-w-0">
-            <p className="truncate text-lg font-bold text-text-primary">
-              {user.name ?? "Usuario"}
-            </p>
-            <p className="truncate text-sm text-text-secondary">{user.email}</p>
-            <RoleBadge owner={isOwner} />
-          </div>
-        </div>
-
-        <div className="mt-4 border-t border-border-subtle pt-3">
-          <Button
-            variant="danger"
-            size="sm"
-            className="w-full justify-start"
-            onClick={() => void onLogout()}
-          >
-            <LogoutIcon /> Cerrar sesión
-          </Button>
-        </div>
-      </div>
-    </>
-  );
-}
-
-function RoleBadge({ owner }: { owner: boolean }) {
-  return (
-    <span
-      className="mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold"
-      style={
-        owner
-          ? { backgroundColor: "var(--brand-100)", color: "var(--brand-700)" }
-          : { backgroundColor: "var(--info-50)", color: "var(--info-600)" }
-      }
-    >
-      {owner ? "Dueña" : "Vendedor"}
-    </span>
-  );
-}
-
 /* ───────────── Iconos (Lucide inline) ───────────── */
 
 const S = {
@@ -411,11 +362,5 @@ const BellIcon = () => (
   <svg {...S}>
     <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
     <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-  </svg>
-);
-const LogoutIcon = () => (
-  <svg {...S} width={16} height={16}>
-    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-    <path d="m16 17 5-5-5-5M21 12H9" />
   </svg>
 );
