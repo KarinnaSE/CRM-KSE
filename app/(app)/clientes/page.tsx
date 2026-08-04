@@ -16,12 +16,14 @@ import { ClientListItem } from "@/components/clientes/ClientListItem";
  *
  * DECISIÓN DE PRODUCTO (visibilidad): en este CRM de 2 personas (Marta/Carlos)
  * todos ven todos los clientes, igual que en Seguimientos. Por eso se consume
- * `clients.list` (que devuelve toda la tabla) sin filtrar por usuario.
+ * `clients.list` (hasta CLIENTES_LIST_CAP clientes) sin filtrar por usuario.
  *
- * SUPUESTO MVP (volumen): `clients.list` hace `collect()` sin cota y el filtrado
- * es en cliente. Es adecuado para el volumen esperado del MVP. Si /clientes se
- * vuelve hot-path con miles de registros, migrar a paginación + búsqueda en
- * backend (searchIndex `search_name` ya existe en el esquema como punto de partida).
+ * VOLUMEN (acotado, KAR-119): `clients.list` está acotada con `.take()` a
+ * CLIENTES_LIST_CAP (2000), así que nunca escanea la tabla entera. La búsqueda
+ * y el filtro por etapa siguen corriendo EN CLIENTE sobre esa ventana acotada
+ * (no server-side). Es adecuado para el volumen esperado del MVP. Si /clientes
+ * se acerca al tope, migrar a paginación + búsqueda en backend (searchIndex
+ * `search_name` ya existe como punto de partida). Ver KAR-119 y follow-up.
  */
 
 /** Normaliza para búsqueda: minúsculas + sin acentos + trim (copia local; ver Seguimientos). */

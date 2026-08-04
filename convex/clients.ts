@@ -14,6 +14,14 @@ import { requireAuthUser } from "./authz";
 // sin límite. Se traen a lo sumo HISTORY_LIMIT items fusionados + flag hasMore.
 const HISTORY_LIMIT = 100;
 
+// Cota dura de la Lista de clientes (KAR-119): nunca leemos más de esta
+// cantidad de una sola vez. Evita el corte silencioso de Convex a los 16 384
+// documentos leídos (mismo límite citado en convex/schema.ts:105-113) y que
+// /clientes descargue la tabla entera. Distinta de HISTORY_LIMIT (historial
+// de la ficha). Con el volumen esperado del CRM devuelve igualmente a TODOS;
+// es una red de seguridad, no un límite operativo.
+const CLIENTES_LIST_CAP = 2000;
+
 /**
  * Item del historial de la ficha (KAR-15/17/18/23). Unión DISCRIMINADA por `kind`:
  * cada tipo trae solo sus campos obligatorios (sin opcionales ambiguos). `occurredAt` es el
@@ -52,12 +60,32 @@ type TimelineItem =
 type InteractionTimelineItem = Extract<TimelineItem, { kind: "nota" | "seguimiento" }>;
 type SaleTimelineItem = Extract<TimelineItem, { kind: "venta" }>;
 
-// Lista todos los clientes (más recientes primero).
+// Lista hasta CLIENTES_LIST_CAP clientes, más recientes primero. La pantalla
+// /clientes consume esta query y hace búsqueda + filtro por etapa EN CLIENTE
+// sobre esta ventana. Se usa `.take()` y NO `.collect()` para no escanear la
+// tabla entera ni chocar con el corte silencioso de Convex (16 384 docs).
+// Contrato sin cambios: devuelve Doc<"clients">[] en orden desc.
 export const list = query({
   args: {},
   handler: async (ctx) => {
     await requireAuthUser(ctx);
-    return await ctx.db.query("clients").order("desc").collect();
+    const rows = await ctx.db
+      .query("clients")
+      .order("desc")
+      .take(CLIENTES_LIST_CAP);
+    // Señal observable (Opción A del plan / condición del auditor): si se toca
+    // el tope, la lista podría estar ocultando clientes antiguos. Deja rastro
+    // en los logs de Convex para migrar a paginación/búsqueda server-side ANTES
+    // de que sea un problema. No cambia el valor devuelto.
+    if (rows.length === CLIENTES_LIST_CAP) {
+      console.warn(
+        `[clients.list] Alcanzado CLIENTES_LIST_CAP=${CLIENTES_LIST_CAP}: la ` +
+          `Lista de clientes puede estar ocultando registros más antiguos y la ` +
+          `búsqueda en cliente no los alcanza. Migrar a paginación/búsqueda ` +
+          `server-side (KAR-119 / follow-up).`,
+      );
+    }
+    return rows;
   },
 });
 
